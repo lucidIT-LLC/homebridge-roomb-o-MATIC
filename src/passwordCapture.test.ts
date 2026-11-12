@@ -8,6 +8,7 @@ import {
   decodePasswordPayload,
   parseRobotAnnouncement,
   PASSWORD_PACKET,
+  robotTlsOptions,
   stripSecret,
   type PasswordSocket,
 } from './passwordCapture.js'
@@ -36,6 +37,20 @@ function scriptedConnect(chunks: Buffer[]): () => PasswordSocket & { written: Bu
 }
 
 describe('local password capture', () => {
+  it('accepts the robot certificate unless verification is turned on', () => {
+    const previous = process.env.ROOMBA_TLS_VERIFY
+    delete process.env.ROOMBA_TLS_VERIFY
+    expect(robotTlsOptions().rejectUnauthorized).toBe(false)
+    process.env.ROOMBA_TLS_VERIFY = '1'
+    expect(robotTlsOptions().rejectUnauthorized).toBe(true)
+    if (previous === undefined) {
+      delete process.env.ROOMBA_TLS_VERIFY
+    }
+    else {
+      process.env.ROOMBA_TLS_VERIFY = previous
+    }
+  })
+
   it('strips trailing NUL bytes and whitespace', () => {
     expect(stripSecret('secret\u0000\u0000')).toBe('secret')
     expect(stripSecret('secret\u0000 \n')).toBe('secret')

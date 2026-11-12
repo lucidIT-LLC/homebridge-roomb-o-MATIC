@@ -67,11 +67,13 @@ export interface CaptureLocalPasswordOptions {
 
 const WAITING = 'Close the iRobot app. Press and hold the Home button for about 2 seconds, until the robot plays a series of tones.'
 
-function tlsOptions(): tls.ConnectionOptions {
+/**
+ * The robot presents a self-signed certificate. Verification stays off unless
+ * ROOMBA_TLS_VERIFY=1, and the socket is opened only to the configured robot IP.
+ */
+export function robotTlsOptions(): tls.ConnectionOptions {
   const options: tls.ConnectionOptions = {
-    // codeql[js/disabling-certificate-validation]
-    // The robot presents a self-signed certificate. This socket is opened only to the configured robot IP.
-    rejectUnauthorized: false,
+    rejectUnauthorized: process.env.ROOMBA_TLS_VERIFY === '1',
     ciphers: process.env.ROBOT_CIPHERS || 'AES128-SHA256,TLS_AES_256_GCM_SHA384',
   }
   if (process.env.ROBOT_TLS_LEGACY !== '0' && constants.SSL_OP_LEGACY_SERVER_CONNECT) {
@@ -95,7 +97,7 @@ function attemptOnce(ip: string, connect: CaptureLocalPasswordOptions['connect']
     let settled = false
     let sliceFrom = 13
     let wrote = false
-    const socket = (connect ?? defaultConnect)(PASSWORD_PORT, ip, tlsOptions())
+    const socket = (connect ?? defaultConnect)(PASSWORD_PORT, ip, robotTlsOptions())
     const finish = (callback: () => void) => {
       if (settled) {
         return
