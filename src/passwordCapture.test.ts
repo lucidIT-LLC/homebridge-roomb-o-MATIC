@@ -56,6 +56,69 @@ describe('local password capture', () => {
     expect(stripSecret('secret\u0000 \n')).toBe('secret')
     const payload = Buffer.concat([Buffer.alloc(13, 1), Buffer.from('secret\0\0')])
     expect(decodePasswordPayload(payload, 13)).toBe('secret')
+    expect(decodePasswordPayload(payload, 13)).not.toBe(stripSecret(payload.subarray(7).toString('utf8')))
+  })
+
+  it('slices a 38-byte :1: packet from offset 7, not the truncated offset 13', async () => {
+    const password = ':1:example-local-secret-pad000'
+    expect(password).toHaveLength(30)
+    expect(password.startsWith(':1:')).toBe(true)
+    const packet = Buffer.concat([
+      Buffer.from([0x10, 0x21, 0x32, 0x43, 0x54, 0x65, 0x76]),
+      Buffer.from(password, 'utf8'),
+      Buffer.from([0x00]),
+    ])
+    expect(packet).toHaveLength(38)
+
+    const at7 = stripSecret(packet.subarray(7).toString('utf8'))
+    const at9 = stripSecret(packet.subarray(9).toString('utf8'))
+    const at13 = stripSecret(packet.subarray(13).toString('utf8'))
+    expect(at7).toBe(password)
+    expect(at9).not.toBe(password)
+    expect(at13).toHaveLength(24)
+    expect(at13.startsWith(':1:')).toBe(false)
+
+    expect(decodePasswordPayload(packet, 13)).toBe(at7)
+    expect(decodePasswordPayload(packet, 9)).toBe(at7)
+    expect(decodePasswordPayload(packet, 7)).toBe(at7)
+    expect(decodePasswordPayload(packet, 13)).not.toBe(at13)
+    expect(decodePasswordPayload(packet, 9)).not.toBe(at9)
+
+    const captured = await captureLocalPassword({
+      ip: '192.0.2.10',
+      connect: scriptedConnect([packet]),
+      maxAttempts: 1,
+      retryDelayMs: 0,
+      sleep: async () => undefined,
+    })
+    expect(captured).toBe(password)
+    expect(captured).toHaveLength(30)
+    expect(captured.startsWith(':1:')).toBe(true)
+    expect(captured).not.toBe(at13)
+
+    const afterShortChunk = await captureLocalPassword({
+      ip: '192.0.2.10',
+      connect: scriptedConnect([Buffer.from([0x00, 0x02]), packet]),
+      maxAttempts: 1,
+      retryDelayMs: 0,
+      sleep: async () => undefined,
+    })
+    expect(afterShortChunk).toBe(password)
+    expect(afterShortChunk).not.toBe(at9)
+    expect(afterShortChunk).not.toBe(at13)
+  })
+
+  it('slices from a :1: prefix that is not at offset 7', () => {
+    const password = ':1:other-layout-secret'
+    const packet = Buffer.concat([
+      Buffer.from([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x0e, 0x0f]),
+      Buffer.from(`${password}\0`, 'utf8'),
+    ])
+    expect(packet.indexOf(':1:')).toBe(10)
+    expect(decodePasswordPayload(packet, 13)).toBe(password)
+    expect(decodePasswordPayload(packet, 9)).toBe(password)
+    expect(decodePasswordPayload(packet, 13)).not.toBe(stripSecret(packet.subarray(7).toString('utf8')))
+    expect(decodePasswordPayload(packet, 13)).not.toBe(stripSecret(packet.subarray(13).toString('utf8')))
   })
 
   it('captures a password without setRawMode and writes the dorita980 probe', async () => {
@@ -105,6 +168,15 @@ describe('local password capture', () => {
     for (const file of files) {
       expect(readFileSync(file, 'utf8')).not.toContain('setRawMode')
     }
+  })
+
+  it('keeps a leading :1: and the CLI uses the shared decoder', () => {
+    const password = ':1:example-local-secret-pad000'
+    expect(stripSecret(`${password}\0\0`)).toBe(password)
+    expect(stripSecret(`  ${password}\n`)).toBe(password)
+    const cli = readFileSync('src/cli/get-password.ts', 'utf8')
+    expect(cli).toContain('captureLocalPassword')
+    expect(cli).not.toMatch(/sliceFrom|subarray\(\s*13\s*\)|slice\(\s*13\s*\)/)
   })
 
   it('parses a robot announcement without requiring the password helper', () => {

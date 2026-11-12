@@ -10,6 +10,11 @@ describe('clean missions and Matter modes', () => {
     expect(cluster.supportedModes.length).toBeLessThanOrEqual(255)
     expect(cluster.supportedModes.map(mode => mode.label)).toEqual(['Automatic', 'Deep Clean', 'Quick'])
     expect(RVC_CLEAN_MODES).toHaveLength(3)
+    expect(RVC_CLEAN_MODES.map(({ label, modeTags }) => ({ label, modeTags }))).toEqual([
+      { label: 'Automatic', modeTags: [{ value: 0 }, { value: 16385 }] },
+      { label: 'Deep Clean', modeTags: [{ value: 16384 }, { value: 16385 }] },
+      { label: 'Quick', modeTags: [{ value: 1 }, { value: 16385 }] },
+    ])
   })
 
   it('maps a room selection to a cleanRoom mission with twoPass for deep clean', async () => {
@@ -70,7 +75,14 @@ describe('clean missions and Matter modes', () => {
         goHome: async () => undefined,
       },
     })
-    const cleanMode = definition.clusters.rvcCleanMode as { supportedModes: unknown[] }
+    const cleanMode = definition.clusters.rvcCleanMode as {
+      supportedModes: Array<{ label: string, modeTags: Array<{ value: number }> }>
+    }
+    expect(cleanMode.supportedModes.map(({ label, modeTags }) => ({ label, modeTags }))).toEqual([
+      { label: 'Automatic', modeTags: [{ value: 0 }, { value: 16385 }] },
+      { label: 'Deep Clean', modeTags: [{ value: 16384 }, { value: 16385 }] },
+      { label: 'Quick', modeTags: [{ value: 1 }, { value: 16385 }] },
+    ])
     expect(cleanMode.supportedModes.length).toBeGreaterThanOrEqual(2)
     expect(cleanMode.supportedModes.length).toBeLessThanOrEqual(255)
     const serviceArea = definition.clusters.serviceArea as { supportedAreas: Array<{ areaId: number, mapId: null }>, selectedAreas: number[] }

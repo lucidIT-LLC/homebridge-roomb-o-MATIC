@@ -11,17 +11,81 @@ export function stripSecret(value: string): string {
   return cleanCredential(value)
 }
 
+const PASSWORD_PREFIX = ':1:'
+const FALLBACK_SLICE_OFFSETS = [7, 9, 13] as const
+
+interface PasswordCandidate {
+  offset: number
+  password: string
+}
+
+function passwordAt(data: Buffer, offset: number): string | undefined {
+  if (!Number.isInteger(offset) || offset < 0 || offset >= data.length) {
+    return undefined
+  }
+  const password = stripSecret(data.subarray(offset).toString('utf8'))
+  return password.length > 0 ? password : undefined
+}
+
+function indexesOfPrefix(data: Buffer, prefix: string): number[] {
+  const marker = Buffer.from(prefix, 'utf8')
+  const offsets: number[] = []
+  let from = 0
+  while (from < data.length) {
+    const offset = data.indexOf(marker, from)
+    if (offset < 0) {
+      break
+    }
+    offsets.push(offset)
+    from = offset + 1
+  }
+  return offsets
+}
+
 /**
- * Decode one password-capture TLS record the way dorita980 does, then drop
- * trailing NUL bytes. A trailing NUL makes MQTT reject the password.
+ * Decode one local-password record and drop trailing NUL bytes.
+ *
+ * A common 38-byte packet has a 7-byte header and a 30-character password
+ * that starts with `:1:` at offset 7. Slicing at 13, or at 9 after a 2-byte
+ * chunk, drops that prefix. The robot then refuses MQTT with
+ * "Bad username or password".
+ *
+ * When `:1:` is present, slice from that byte. The longest such candidate
+ * wins over the shorter slices at 9 and 13. A packet with no `:1:` prefix
+ * keeps `sliceFrom` (13, or 9 when the first TLS chunk was 2 bytes). Not
+ * every robot sends `:1:`.
  */
 export function decodePasswordPayload(data: Buffer, sliceFrom = 13): string | undefined {
   if (data.length <= 7) {
     return undefined
   }
-  const start = Math.min(sliceFrom, data.length)
-  const cleaned = stripSecret(data.subarray(start).toString('utf8'))
-  return cleaned.length > 0 ? cleaned : undefined
+
+  const seen = new Set<number>([
+    ...indexesOfPrefix(data, PASSWORD_PREFIX),
+    ...FALLBACK_SLICE_OFFSETS,
+    sliceFrom,
+  ])
+  const candidates: PasswordCandidate[] = []
+  for (const offset of seen) {
+    const password = passwordAt(data, offset)
+    if (password) {
+      candidates.push({ offset, password })
+    }
+  }
+
+  const prefixed = candidates.filter(candidate => candidate.password.startsWith(PASSWORD_PREFIX))
+  const firstPrefixed = prefixed[0]
+  if (firstPrefixed) {
+    let winner = firstPrefixed
+    for (const candidate of prefixed) {
+      if (candidate.password.length > winner.password.length) {
+        winner = candidate
+      }
+    }
+    return winner.password
+  }
+
+  return candidates.find(candidate => candidate.offset === sliceFrom)?.password
 }
 
 export function parseRobotAnnouncement(message: Buffer): { blid: string, ip?: string } | undefined {
@@ -95,6 +159,8 @@ function delay(ms: number): Promise<void> {
 function attemptOnce(ip: string, connect: CaptureLocalPasswordOptions['connect'], timeoutMs: number): Promise<string | undefined> {
   return new Promise((resolve, reject) => {
     let settled = false
+    // Used only when the packet has no `:1:` prefix. A 2-byte first chunk
+    // means the next record's legacy password starts at 9 instead of 13.
     let sliceFrom = 13
     let wrote = false
     const socket = (connect ?? defaultConnect)(PASSWORD_PORT, ip, robotTlsOptions())
