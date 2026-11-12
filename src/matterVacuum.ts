@@ -65,6 +65,7 @@ export interface MatterVacuumHandlers {
   pause: () => Promise<void>
   resume: () => Promise<void>
   goHome: () => Promise<void>
+  identify?: () => Promise<void>
 }
 
 export function buildMatterDefinition(input: {
@@ -81,6 +82,7 @@ export function buildMatterDefinition(input: {
 }): {
   UUID: string
   displayName: string
+  name: string
   deviceType: unknown
   serialNumber: string
   manufacturer: string
@@ -123,6 +125,9 @@ export function buildMatterDefinition(input: {
     },
   }
   const handlers: Record<string, Record<string, (...args: any[]) => Promise<void>>> = {
+    identify: {
+      identify: async () => input.handlers.identify?.(),
+    },
     rvcCleanMode: {
       changeToMode: async request => input.handlers.changeCleanMode(request ?? {}),
     },
@@ -137,7 +142,6 @@ export function buildMatterDefinition(input: {
   }
   if (areas.length > 0) {
     clusters.serviceArea = {
-      supportedMaps: [],
       supportedAreas: areas.map(area => ({
         areaId: area.areaId,
         mapId: null,
@@ -159,6 +163,8 @@ export function buildMatterDefinition(input: {
   return {
     UUID: input.uuid,
     displayName: input.name,
+    // Homebridge uses `name` for the Matter node label while pairing.
+    name: input.name,
     deviceType: input.deviceType,
     serialNumber: input.serialNumber,
     manufacturer: 'iRobot',

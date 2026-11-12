@@ -2,6 +2,7 @@ import { HomebridgePluginUiServer } from '@homebridge/plugin-ui-utils'
 import dorita980 from 'dorita980'
 
 import { CaptureRegistry } from '../dist/captureSession.js'
+import { loadMatterPairing } from '../dist/matterPairing.js'
 import { readRobotMaps } from '../dist/pmap.js'
 
 const registry = new CaptureRegistry()
@@ -25,6 +26,14 @@ class UiServer extends HomebridgePluginUiServer {
     this.onRequest('/capture-poll', (payload = {}) => {
       const jobId = typeof payload.jobId === 'string' ? payload.jobId : ''
       return registry.poll(jobId)
+    })
+
+    this.onRequest('/matter/pairing', async () => {
+      const storage = this.homebridgeStoragePath
+      if (!storage) {
+        return { ok: false, message: 'Homebridge storage path is not available yet. Restart Homebridge and open this page again.' }
+      }
+      return await loadMatterPairing(storage)
     })
 
     this.onRequest('/list-rooms', async (payload = {}) => {

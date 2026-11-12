@@ -19,6 +19,8 @@
       .device { margin-top: 12px; }
       .row { display: flex; gap: 12px; flex-wrap: wrap; }
       .muted { opacity: 0.8; }
+      .code { font-size: 1.6rem; letter-spacing: 0.08em; font-weight: 700; }
+      .bridge { opacity: 0.75; }
     </style>
   </head>
   <body>
@@ -48,6 +50,19 @@
       <p id="capture-status" class="status" role="status"></p>
     </div>
 
+    <div class="card" id="pairing-card">
+      <h2>Matter pairing</h2>
+      <p>A Roomba is its own Matter accessory, the same way a Roborock is. Apple Home uses the code on this page. It does not use the Homebridge bridge QR code.</p>
+      <ol>
+        <li>Turn Matter on for this bridge under Homebridge Settings, then restart Homebridge.</li>
+        <li>Save a robot here first. The setup code appears after the vacuum is published.</li>
+        <li>In the Apple Home app, add an accessory and enter the 11-digit code, or scan the QR code.</li>
+      </ol>
+      <div id="pairing-list"></div>
+      <button id="pairing-refresh" type="button">Refresh pairing codes</button>
+      <p id="pairing-status" class="status" role="status"></p>
+    </div>
+
     <div class="card">
       <h2>Platform</h2>
       <label for="disable-discovery">
@@ -64,6 +79,7 @@
     </div>
 
     <div id="devices"></div>
+    <button id="add-device" type="button">Add a robot by hand</button>
     <button id="save-button" type="button">Save</button>
     <p id="save-status" class="status" role="status"></p>
 
@@ -239,6 +255,70 @@
         }
       })
 
+      async function refreshPairing() {
+        const list = document.getElementById('pairing-list')
+        const status = document.getElementById('pairing-status')
+        list.replaceChildren()
+        try {
+          const result = await homebridge.request('/matter/pairing')
+          if (!result?.ok) {
+            status.textContent = result?.message || 'Pairing codes are not available yet.'
+            return
+          }
+          const entries = result.entries || []
+          if (entries.length === 0) {
+            status.textContent = 'No Matter code yet. Turn Matter on for this bridge, save a robot, and restart Homebridge.'
+            return
+          }
+          for (const entry of entries) {
+            const card = document.createElement('div')
+            card.className = entry.kind === 'bridge' ? 'bridge' : ''
+            const title = document.createElement('h2')
+            title.textContent = entry.name
+            card.append(title)
+            const hint = document.createElement('p')
+            hint.textContent = entry.hint
+            card.append(hint)
+            if (entry.kind === 'vacuum') {
+              const code = document.createElement('p')
+              code.className = 'code'
+              code.textContent = entry.manualPairingCode
+              card.append(code)
+              if (entry.qrCodeDataUrl) {
+                const image = document.createElement('img')
+                image.alt = 'Matter pairing QR code'
+                image.src = entry.qrCodeDataUrl
+                card.append(image)
+              }
+              const state = document.createElement('p')
+              state.textContent = entry.commissioned ? 'Already added to a Matter controller.' : 'Not paired yet.'
+              card.append(state)
+            }
+            list.append(card)
+          }
+          status.textContent = ''
+        }
+        catch (error) {
+          status.textContent = error?.message || 'Could not load pairing codes.'
+        }
+      }
+
+      document.getElementById('pairing-refresh').addEventListener('click', () => {
+        refreshPairing()
+      })
+
+      document.getElementById('add-device').addEventListener('click', () => {
+        platform.devices.push({
+          name: 'Roomba',
+          ipaddress: '',
+          blid: '',
+          robotpwd: '',
+          cleanMode: 'automatic',
+          rooms: [],
+        })
+        drawDevices()
+      })
+
       document.getElementById('save-button').addEventListener('click', async () => {
         platform.name = platform.name || 'Roomb-O-Matic'
         platform.platform = 'Roomb-O-Matic'
@@ -258,9 +338,11 @@
         }
       })
 
-      load().catch((error) => {
-        setStatus(error?.message || 'Could not load the plugin config.')
-      })
+      load()
+        .then(() => refreshPairing())
+        .catch((error) => {
+          setStatus(error?.message || 'Could not load the plugin config.')
+        })
     </script>
   </body>
 </html>

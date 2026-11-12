@@ -76,6 +76,16 @@ roomb-o-matic-list-rooms --ip 192.0.2.10 --blid YOUR_BLID --password YOUR_ROBOT_
 
 The command prints map and room ids only.
 
+## Matter pairing
+
+A Roomba is published as its own Matter vacuum, the same way a Roborock is. Apple Home pairs that vacuum with its own code. The Homebridge bridge QR code does not add the robot.
+
+1. In Homebridge, open Settings and turn Matter on for the bridge that runs this plugin. Restart Homebridge.
+2. Save the robot in the Roomb-O-Matic settings page.
+3. Open that page again and use the code under **Matter pairing**. In the Apple Home app, add an accessory and enter the code, or scan the QR code.
+
+The HomeKit Fan, dock switch, battery, and bin stay available when Matter is off.
+
 ## Clean modes
 
 Matter advertises three RvcCleanMode values. One mode is not enough: Homebridge 2.5 / Matter.js 0.18 reject a list shorter than 2, and Apple Home then reports the accessory as not found.

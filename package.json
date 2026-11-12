@@ -53,10 +53,12 @@
   },
   "dependencies": {
     "@homebridge/plugin-ui-utils": "^2.0.1",
-    "dorita980": "^4.0.0"
+    "dorita980": "^4.0.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/node": "^22.13.6",
+    "@types/qrcode": "^1.5.6",
     "@vitest/coverage-v8": "^3.0.7",
     "eslint": "^9.21.0",
     "homebridge": "^2.5.0",

@@ -3,6 +3,7 @@ declare module 'dorita980' {
     start: () => Promise<unknown>
     stop: () => Promise<unknown>
     dock: () => Promise<unknown>
+    find?: () => Promise<unknown>
     pause?: () => Promise<unknown>
     resume?: () => Promise<unknown>
     cleanRoom?: (args: object) => Promise<unknown>

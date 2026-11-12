@@ -267,6 +267,12 @@ export class RoombaAccessory {
           this.log.info(`${this.device.name}: Sending to dock`)
           await this.robot.dock()
         },
+        identify: async () => {
+          if (this.robot.find) {
+            this.log.info(`${this.device.name}: Playing locate tone`)
+            await this.robot.find()
+          }
+        },
       },
     })
   }

@@ -9,6 +9,7 @@ import type { DeviceConfig, RoombOMaticConfig } from './settings.js'
 import { RoombaAccessory } from './accessory.js'
 import { discoverCloudRobots } from './cloudDiscovery.js'
 import { backoffDelayMs, planDeviceDiscovery, sanitizeDevice, usableLocalDevice } from './discoveryPlan.js'
+import { writeMatterDeviceIndex, type MatterDeviceIndexEntry } from './matterPairing.js'
 import { safeError } from './redact.js'
 import { matterPreferenceEnabled, PLATFORM_NAME, PLUGIN_NAME } from './settings.js'
 
@@ -28,6 +29,8 @@ export class RoombOMaticPlatform {
   private readonly accessories = new Map<string, PlatformAccessory>()
   private readonly sessions = new Map<string, RoombaAccessory>()
   private readonly matterRegistered = new Set<string>()
+  private readonly cachedMatter = new Map<string, MatterAccessory>()
+  private readonly matterIndex: MatterDeviceIndexEntry[] = []
   private retryAttempt = 0
   private retryTimer?: ReturnType<typeof setTimeout>
   private discovering = false
@@ -55,10 +58,12 @@ export class RoombOMaticPlatform {
     this.accessories.set(accessory.UUID, accessory)
   }
 
-  configureMatterAccessory(accessory: { displayName?: string }): void {
-    if (accessory.displayName) {
-      this.log.info(`Restoring Matter accessory: ${accessory.displayName}`)
+  configureMatterAccessory(accessory: MatterAccessory): void {
+    if (!accessory?.UUID) {
+      return
     }
+    this.cachedMatter.set(accessory.UUID, accessory)
+    this.log.info(`Restoring Matter accessory: ${accessory.displayName}`)
   }
 
   async discoverDevices(): Promise<void> {
@@ -185,14 +190,14 @@ export class RoombOMaticPlatform {
   }
 
   private attach(accessory: PlatformAccessory, device: DeviceConfig): void {
-    if (this.sessions.has(accessory.UUID)) {
-      return
+    let session = this.sessions.get(accessory.UUID)
+    if (!session) {
+      session = new RoombaAccessory(this.log, this.api, accessory, device, {
+        robotFactory: this.deps.robotFactory,
+        matter: this.matterApi(),
+      })
+      this.sessions.set(accessory.UUID, session)
     }
-    const session = new RoombaAccessory(this.log, this.api, accessory, device, {
-      robotFactory: this.deps.robotFactory,
-      matter: this.matterApi(),
-    })
-    this.sessions.set(accessory.UUID, session)
     void this.publishMatter(session, device)
   }
 
@@ -216,14 +221,80 @@ export class RoombOMaticPlatform {
     if (!definition) {
       return
     }
-    const { areas: _areas, ...matterAccessory } = definition
+    const { areas: _areas, ...fresh } = definition
+    const cached = this.cachedMatter.get(fresh.UUID)
+    const matterAccessory = cached ? Object.assign(cached, fresh) : fresh
     try {
       await matter!.registerPlatformAccessories!(PLUGIN_NAME, PLATFORM_NAME, [matterAccessory as MatterAccessory])
-      this.matterRegistered.add(definition.UUID)
-      this.log.info(`Published Matter vacuum: ${device.name}`)
+      this.matterRegistered.add(fresh.UUID)
+      await this.pushInitialMatterState(matter!, fresh.UUID, fresh.clusters)
+      this.rememberMatterDevice(device.name, fresh.serialNumber, fresh.UUID)
+      this.log.info(`Published Matter vacuum '${device.name}'. Pair it from the plugin page with its own code, not the Homebridge bridge code.`)
     }
     catch (error) {
       this.log.error(`${device.name}: Matter publish failed — ${safeError(error, [device.robotpwd, device.blid])}. The HomeKit Fan is still available.`)
+    }
+  }
+
+  private async pushInitialMatterState(
+    matter: MatterApi,
+    uuid: string,
+    clusters: Record<string, unknown>,
+  ): Promise<void> {
+    if (!matter.updateAccessoryState) {
+      return
+    }
+    const updates: Array<[string, Record<string, unknown>]> = []
+    for (const [cluster, value] of Object.entries(clusters)) {
+      if (!value || typeof value !== 'object') {
+        continue
+      }
+      const attributes = value as Record<string, unknown>
+      const live: Record<string, unknown> = {}
+      if ('currentMode' in attributes) {
+        live.currentMode = attributes.currentMode
+      }
+      if ('operationalState' in attributes) {
+        live.operationalState = attributes.operationalState
+      }
+      if ('batPercentRemaining' in attributes) {
+        live.batPercentRemaining = attributes.batPercentRemaining
+        live.batChargeLevel = attributes.batChargeLevel
+      }
+      if ('selectedAreas' in attributes) {
+        live.selectedAreas = attributes.selectedAreas
+      }
+      if (Object.keys(live).length > 0) {
+        updates.push([cluster, live])
+      }
+    }
+    for (const [cluster, attributes] of updates) {
+      try {
+        await matter.updateAccessoryState(uuid, cluster, attributes)
+      }
+      catch (error) {
+        this.log.warn(`Matter state for ${cluster} was not accepted yet — ${safeError(error)}`)
+      }
+    }
+  }
+
+  private rememberMatterDevice(name: string, serialNumber: string, uuid: string): void {
+    const existing = this.matterIndex.findIndex(device => device.uuid === uuid)
+    const entry = { name, serialNumber, uuid }
+    if (existing >= 0) {
+      this.matterIndex[existing] = entry
+    }
+    else {
+      this.matterIndex.push(entry)
+    }
+    try {
+      const storage = this.api.user?.storagePath?.()
+      if (storage) {
+        writeMatterDeviceIndex(storage, this.matterIndex)
+      }
+    }
+    catch (error) {
+      this.log.warn(`Could not record the Matter pairing index — ${safeError(error)}`)
     }
   }
 

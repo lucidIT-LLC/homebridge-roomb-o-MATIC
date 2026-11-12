@@ -69,6 +69,8 @@ const WAITING = 'Close the iRobot app. Press and hold the Home button for about 
 
 function tlsOptions(): tls.ConnectionOptions {
   const options: tls.ConnectionOptions = {
+    // codeql[js/disabling-certificate-validation]
+    // The robot presents a self-signed certificate. This socket is opened only to the configured robot IP.
     rejectUnauthorized: false,
     ciphers: process.env.ROBOT_CIPHERS || 'AES128-SHA256,TLS_AES_256_GCM_SHA384',
   }
