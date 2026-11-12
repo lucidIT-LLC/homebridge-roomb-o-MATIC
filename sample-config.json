@@ -1,36 +1,21 @@
 {
-  "bridge": {
-    "name": "Homebridge",
-    "username": "CD:22:3D:E3:CE:30",
-    "port": 51826,
-    "pin": "031-45-156"
-  },
-  "description": "Homebridge platform plugin for Roomba devices",
-  "platforms": [
+  "platform": "Roomb-O-Matic",
+  "name": "Roomb-O-Matic",
+  "disableDiscovery": true,
+  "enableMatter": "auto",
+  "devices": [
     {
-      "platform": "Roomba",
-      "name": "Roomba",
-      "enableMatter": true,
-      "externalAccessory": false,
-      "devices": [
-        {
-          "name": "Roomba",
-          "model": "960",
-          "blid": "1234567890",
-          "robotpwd": "aPassword",
-          "ipaddress": "10.0.0.30",
-          "dockContactSensor": true,
-          "runningContactSensor": true,
-          "binContactSensor": false,
-          "cleanBehaviour": "everywhere",
-          "stopBehaviour": "home"
-        }
+      "name": "Downstairs Roomba",
+      "blid": "YOUR_BLID",
+      "robotpwd": "YOUR_ROBOT_PASSWORD",
+      "ipaddress": "192.0.2.10",
+      "cleanMode": "automatic",
+      "pmapId": "YOUR_PMAP_ID",
+      "userPmapvId": "YOUR_USER_PMAPV_ID",
+      "rooms": [
+        { "id": "1", "name": "Kitchen" },
+        { "id": "2", "name": "Hall", "selected": true }
       ]
     }
-  ],
-  "plugins": [
-    "homebridge-roomba"
-  ],
-  "accessories": [],
-  "debug": false
+  ]
 }

@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Roomb-O-Matic</title>
+    <style>
+      :root { color-scheme: light dark; font-family: "Segoe UI", sans-serif; }
+      body { margin: 0; padding: 24px; max-width: 860px; }
+      h1 { font-size: 1.4rem; margin: 0 0 8px; }
+      h2 { font-size: 1.05rem; margin: 24px 0 8px; }
+      p, li { line-height: 1.45; }
+      .card { border: 1px solid #8884; border-radius: 10px; padding: 16px; margin: 12px 0; }
+      label { display: block; font-weight: 600; margin: 10px 0 4px; }
+      input, select, button { font: inherit; padding: 8px 10px; }
+      input, select { width: min(100%, 420px); }
+      button { margin: 8px 8px 0 0; cursor: pointer; }
+      .status { min-height: 1.4em; margin-top: 8px; }
+      .device { margin-top: 12px; }
+      .row { display: flex; gap: 12px; flex-wrap: wrap; }
+      .muted { opacity: 0.8; }
+    </style>
+  </head>
+  <body>
+    <h1>Roomb-O-Matic</h1>
+    <p>Capture the robot password on the local network. This works in Docker without a terminal.</p>
+    <div class="card">
+      <h2>Before you press the button</h2>
+      <ol>
+        <li>Close the iRobot app. The robot allows only one local connection.</li>
+        <li>For an i-series robot (i5 and similar), press and hold the <strong>Home</strong> button — the dock / house icon — for about 2 seconds, until you hear tones.</li>
+        <li>Do not hold both buttons. That is the 900-series gesture.</li>
+        <li>Leave this page open. Capture retries until the robot offers a password.</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h2>Capture</h2>
+      <label for="capture-name">Display name</label>
+      <input id="capture-name" value="Roomba">
+      <label for="capture-ip">Robot IP address</label>
+      <input id="capture-ip" placeholder="192.0.2.10" inputmode="decimal">
+      <label for="capture-blid">BLID, if you already know it</label>
+      <input id="capture-blid" type="password" autocomplete="off">
+      <div>
+        <button id="capture-button" type="button">Capture password</button>
+      </div>
+      <p id="capture-status" class="status" role="status"></p>
+    </div>
+
+    <div class="card">
+      <h2>Platform</h2>
+      <label for="disable-discovery">
+        <input id="disable-discovery" type="checkbox" checked>
+        Skip iRobot cloud login
+      </label>
+      <label for="enable-matter">Matter</label>
+      <select id="enable-matter">
+        <option value="auto">Automatic when Homebridge Matter is available</option>
+        <option value="on">On</option>
+        <option value="off">Off (HomeKit Fan only)</option>
+      </select>
+      <p class="muted">The HomeKit Fan, dock switch, battery, and bin stay available either way.</p>
+    </div>
+
+    <div id="devices"></div>
+    <button id="save-button" type="button">Save</button>
+    <p id="save-status" class="status" role="status"></p>
+
+    <script>
+      const statusNode = document.getElementById('capture-status')
+      const saveStatus = document.getElementById('save-status')
+      const devicesNode = document.getElementById('devices')
+      let platform = {
+        platform: 'Roomb-O-Matic',
+        name: 'Roomb-O-Matic',
+        disableDiscovery: true,
+        enableMatter: 'auto',
+        devices: [],
+      }
+
+      function setStatus(text) {
+        statusNode.textContent = text
+      }
+
+      function deviceTemplate(device, index) {
+        const card = document.createElement('div')
+        card.className = 'card device'
+        card.innerHTML = `
+          <h2>Robot ${index + 1}</h2>
+          <label>Name <input data-field="name" type="text"></label>
+          <label>IP address <input data-field="ipaddress" type="text"></label>
+          <label>BLID <input data-field="blid" type="password" autocomplete="off"></label>
+          <label>Password <input data-field="robotpwd" type="password" autocomplete="off"></label>
+          <label>Map id <input data-field="pmapId" type="text"></label>
+          <label>Map version <input data-field="userPmapvId" type="text"></label>
+          <label>Clean mode
+            <select data-field="cleanMode">
+              <option value="automatic">Automatic</option>
+              <option value="deep">Deep Clean (2 passes)</option>
+              <option value="quick">Quick (1 pass)</option>
+            </select>
+          </label>
+          <div data-rooms></div>
+          <button type="button" data-add-room>Add room</button>
+          <button type="button" data-list-rooms>List map and rooms from the robot</button>
+          <p class="status" data-map-status role="status"></p>
+        `
+        const fields = ['name', 'ipaddress', 'blid', 'robotpwd', 'pmapId', 'userPmapvId', 'cleanMode']
+        for (const field of fields) {
+          const input = card.querySelector(`[data-field="${field}"]`)
+          input.value = device[field] ?? (field === 'cleanMode' ? 'automatic' : '')
+          input.addEventListener('input', () => {
+            device[field] = input.value
+          })
+        }
+        const roomsNode = card.querySelector('[data-rooms]')
+        const drawRooms = () => {
+          roomsNode.replaceChildren()
+          device.rooms = device.rooms || []
+          device.rooms.forEach((room, roomIndex) => {
+            const row = document.createElement('div')
+            row.className = 'row'
+            row.innerHTML = `
+              <label>Room id <input data-room="id" type="text"></label>
+              <label>Room name <input data-room="name" type="text"></label>
+              <label><input data-room="selected" type="checkbox"> Selected</label>
+              <button type="button" data-remove>Remove</button>
+            `
+            row.querySelector('[data-room="id"]').value = room.id || ''
+            row.querySelector('[data-room="name"]').value = room.name || ''
+            row.querySelector('[data-room="selected"]').checked = Boolean(room.selected)
+            row.querySelector('[data-room="id"]').addEventListener('input', (event) => { room.id = event.target.value })
+            row.querySelector('[data-room="name"]').addEventListener('input', (event) => { room.name = event.target.value })
+            row.querySelector('[data-room="selected"]').addEventListener('change', (event) => { room.selected = event.target.checked })
+            row.querySelector('[data-remove]').addEventListener('click', () => {
+              device.rooms.splice(roomIndex, 1)
+              drawRooms()
+            })
+            roomsNode.append(row)
+          })
+        }
+        drawRooms()
+        card.querySelector('[data-add-room]').addEventListener('click', () => {
+          device.rooms = device.rooms || []
+          device.rooms.push({ id: '', name: '' })
+          drawRooms()
+        })
+        card.querySelector('[data-list-rooms]').addEventListener('click', async () => {
+          const mapStatus = card.querySelector('[data-map-status]')
+          mapStatus.textContent = 'Asking the robot for map ids. Close the iRobot app first.'
+          try {
+            const result = await homebridge.request('/list-rooms', {
+              ip: device.ipaddress,
+              blid: device.blid,
+              robotpwd: device.robotpwd,
+            })
+            const map = result.maps?.[0]
+            if (!map) {
+              mapStatus.textContent = 'The robot did not return a map. Drive a mapping run in the iRobot app, then try again.'
+              return
+            }
+            device.pmapId = map.pmapId || device.pmapId
+            device.userPmapvId = map.userPmapvId || device.userPmapvId
+            if (Array.isArray(map.regions) && map.regions.length > 0) {
+              device.rooms = map.regions.map((region) => ({ id: region.id, name: region.name || region.id }))
+            }
+            card.querySelector('[data-field="pmapId"]').value = device.pmapId || ''
+            card.querySelector('[data-field="userPmapvId"]').value = device.userPmapvId || ''
+            drawRooms()
+            mapStatus.textContent = `Found ${device.rooms.length} room(s). Review them, then save.`
+          }
+          catch (error) {
+            mapStatus.textContent = error?.message || 'Could not read rooms.'
+          }
+        })
+        return card
+      }
+
+      function drawDevices() {
+        devicesNode.replaceChildren()
+        platform.devices.forEach((device, index) => {
+          devicesNode.append(deviceTemplate(device, index))
+        })
+      }
+
+      async function load() {
+        const configs = await homebridge.getPluginConfig()
+        platform = configs[0] || platform
+        platform.platform = 'Roomb-O-Matic'
+        platform.devices = platform.devices || []
+        document.getElementById('disable-discovery').checked = platform.disableDiscovery !== false
+        document.getElementById('enable-matter').value = platform.enableMatter || 'auto'
+        drawDevices()
+      }
+
+      document.getElementById('capture-button').addEventListener('click', async () => {
+        const ip = document.getElementById('capture-ip').value.trim()
+        const name = document.getElementById('capture-name').value.trim() || 'Roomba'
+        const blid = document.getElementById('capture-blid').value.trim()
+        if (!ip) {
+          setStatus('Enter the robot IP address.')
+          return
+        }
+        setStatus('Waiting for the Home button. Hold Home for about 2 seconds until you hear tones.')
+        try {
+          const started = await homebridge.request('/capture-start', { ip, name, blid })
+          const poll = async () => {
+            const result = await homebridge.request('/capture-poll', { jobId: started.jobId })
+            if (result.state === 'pending') {
+              setStatus(result.message || 'Still waiting for the Home button.')
+              setTimeout(poll, 1000)
+              return
+            }
+            if (result.state === 'error') {
+              setStatus(result.message || 'Capture failed.')
+              return
+            }
+            const device = {
+              name: result.name || name,
+              ipaddress: result.ipaddress || ip,
+              blid: result.blid || '',
+              robotpwd: result.robotpwd || '',
+              cleanMode: 'automatic',
+              rooms: [],
+            }
+            const existing = platform.devices.findIndex((item) => item.ipaddress === device.ipaddress || (device.blid && item.blid === device.blid))
+            if (existing >= 0) platform.devices[existing] = { ...platform.devices[existing], ...device }
+            else platform.devices.push(device)
+            platform.disableDiscovery = true
+            document.getElementById('disable-discovery').checked = true
+            drawDevices()
+            setStatus('Captured. The password is stored in the masked field. Save to turn cloud login off.')
+          }
+          await poll()
+        }
+        catch (error) {
+          setStatus(error?.message || 'Capture failed.')
+        }
+      })
+
+      document.getElementById('save-button').addEventListener('click', async () => {
+        platform.name = platform.name || 'Roomb-O-Matic'
+        platform.platform = 'Roomb-O-Matic'
+        platform.disableDiscovery = document.getElementById('disable-discovery').checked
+        platform.enableMatter = document.getElementById('enable-matter').value
+        platform.devices = (platform.devices || []).map((device) => ({
+          ...device,
+          rooms: (device.rooms || []).filter((room) => room.id && room.name),
+        }))
+        try {
+          await homebridge.updatePluginConfig([platform])
+          await homebridge.savePluginConfig()
+          saveStatus.textContent = 'Saved. Restart Homebridge if it is already running.'
+        }
+        catch (error) {
+          saveStatus.textContent = error?.message || 'Save failed.'
+        }
+      })
+
+      load().catch((error) => {
+        setStatus(error?.message || 'Could not load the plugin config.')
+      })
+    </script>
+  </body>
+</html>

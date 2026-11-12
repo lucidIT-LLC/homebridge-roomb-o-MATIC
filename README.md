@@ -1,63 +1,100 @@
-<p align="center">
-   <a href="https://github.com/homebridge-plugins/homebridge-roomba"><img alt="homebridge-roomba" src="https://raw.githubusercontent.com/homebridge-plugins/homebridge-roomba/latest/branding/Homebridge_x_Roomba.png" width="600px"></a>
-</p>
-<span align="center">
+# Homebridge Roomb-O-Matic
 
-## homebridge-roomba
+Homebridge plugin for iRobot Roomba vacuums on the local network. It keeps the HomeKit Fan, dock switch, battery, and bin from 1.2.1, and on Homebridge 2.5 it also publishes a Matter robotic vacuum.
 
-Homebridge plugin to integrate iRobot Roomba vacuums into HomeKit
+The published npm package `homebridge-roomb-o-matic@1.2.1` did not include TypeScript source. This repository is that package, reconstructed, with the roadmap items filled in. It is not the `homebridge-plugins/homebridge-roomba` plugin.
 
-[![npm](https://img.shields.io/npm/v/@homebridge-plugins/homebridge-roomba/latest?label=latest)](https://www.npmjs.com/package/@homebridge-plugins/homebridge-roomba)
-[![npm](https://img.shields.io/npm/v/@homebridge-plugins/homebridge-roomba/beta?label=beta)](https://github.com/homebridge/homebridge/wiki/How-to-Install-Alternate-Plugin-Versions)<br>
-[![npm](https://img.shields.io/npm/dt/@homebridge-plugins/homebridge-roomba)](https://www.npmjs.com/package/@homebridge-plugins/homebridge-roomba)
-[![Discord](https://img.shields.io/discord/432663330281226270?color=728ED5&logo=discord&label=hb-discord)](https://discord.gg/bHjKNkN)
+## Install
 
-</span>
+This release is not published to npm. Install it from GitHub:
 
-### Plugin Information
+```bash
+npm install -g lucidIT-LLC/homebridge-roomb-o-MATIC#cursor/roomb-o-matic-1.3-74d4
+```
 
-- This plugin allows you to view and control your iRobot Roomba vacuums within HomeKit. The plugin:
-  - connects to each Roomba directly over your local network
-  - needs the robot's BLID and local password:
-    - the simplest way is `npx get-roomba-password-cloud <iRobot email> <iRobot password>`, which reads them from your iRobot account and covers every robot on it (add `IROBOT_COUNTRY_CODE=GB` or similar if you are outside the US)
-    - or ask the robot directly with `npx get-roomba-password`, holding its HOME button until it beeps. Note newer robots, including the j series, no longer give the password out this way and will end with `Error getting password`
-    - ⚠️ `npm run roomba:getpassword` only works from a manual checkout of this repository, not a Homebridge UI install
-  - can optionally expose robots over Matter as well as HomeKit
+Homebridge 1.9 through 2.x is supported, including 2.5. Node.js 20, 22, or 24.
 
-### Prerequisites
+## Configure
 
-- To use this plugin, you will need to already have:
-  - [Node](https://nodejs.org): latest version of `v22` or `v24` - any other major version is not supported.
-  - [Homebridge](https://homebridge.io): `v2` - refer to link for more information and installation instructions.
-  - A Wi-Fi connected Roomba on the same network as Homebridge.
+Use the Roomb-O-Matic page in Homebridge Config UI, or edit `config.json`:
 
-### Setup
+```json
+{
+  "platform": "Roomb-O-Matic",
+  "name": "Roomb-O-Matic",
+  "disableDiscovery": true,
+  "enableMatter": "auto",
+  "devices": [
+    {
+      "name": "Downstairs Roomba",
+      "blid": "YOUR_BLID",
+      "robotpwd": "YOUR_ROBOT_PASSWORD",
+      "ipaddress": "192.0.2.10",
+      "cleanMode": "automatic",
+      "pmapId": "YOUR_PMAP_ID",
+      "userPmapvId": "YOUR_USER_PMAPV_ID",
+      "rooms": [
+        { "id": "1", "name": "Kitchen" },
+        { "id": "2", "name": "Hall", "selected": true }
+      ]
+    }
+  ]
+}
+```
 
-- [Installation](https://github.com/homebridge-plugins/homebridge-roomba/wiki/Installation)
-- [Configuration](https://github.com/homebridge-plugins/homebridge-roomba/wiki/Configuration)
-- [Beta Version](https://github.com/homebridge-plugins/homebridge-roomba/wiki/Beta-Version)
-- [Node Version](https://github.com/homebridge-plugins/homebridge-roomba/wiki/Node-Version)
+`platform` must stay `Roomb-O-Matic`. `disableDiscovery: true` skips the iRobot cloud. A saved `devices` list always skips cloud login, even if an email and password are also present. If cloud discovery is used and it fails or comes back empty, accessories already cached by Homebridge stay registered and discovery retries with backoff.
 
-### Features
+`enableMatter` accepts `auto` (default), `on`, or `off`. `auto` publishes Matter when that Homebridge bridge has Matter available. The HomeKit Fan path stays in place either way.
 
-- A switch to start and stop a clean
-- Battery level and charging state
-- A contact sensor that reports when the Roomba is docked
-- Filter maintenance status
+## Password capture
 
-### Help/About
+Close the iRobot app first. The robot accepts one local connection at a time.
 
-- [Common Errors](https://github.com/homebridge-plugins/homebridge-roomba/wiki/Common-Errors)
-- [Support Request](https://github.com/homebridge-plugins/homebridge-roomba/issues/new/choose)
-- [Changelog](https://github.com/homebridge-plugins/homebridge-roomba/blob/latest/CHANGELOG.md)
+On an i-series robot such as the i5+, press and hold the **Home** button (the dock / house icon) for about two seconds, until it plays tones. Do not hold both buttons; that gesture is for 900-series robots.
 
-### Credits
+The plugin then connects to port 8883 and reads the password. It retries while it waits for the button. Trailing NUL bytes are removed, because leaving one on the password makes MQTT report "Bad username or password".
 
-- To Rayan Khan: the original creator of this plugin.
-- To the [`dorita980`](https://www.npmjs.com/package/dorita980) library, which provides the local Roomba API.
-- To the creators/contributors of [Homebridge](https://homebridge.io) who make this plugin possible.
+In Config UI, open Roomb-O-Matic, enter the robot IP, and choose **Capture password**. The page does not print the password or BLID in the status line. Saving the form writes them into `devices` and turns cloud login off.
 
-### Disclaimer
+From a shell, including `docker exec` without a TTY:
 
-- I am in no way affiliated with iRobot and this plugin is a personal project that I maintain in my free time.
-- Use this plugin entirely at your own risk - please see licence for more information.
+```bash
+roomb-o-matic-getpassword --ip 192.0.2.10 --config /var/lib/homebridge/config.json --name "Downstairs Roomba"
+```
+
+Add `--blid YOUR_BLID` when the robot does not answer the local announcement. The command does not use `process.stdin.setRawMode`, and it does not print the password or BLID.
+
+## Rooms
+
+Apple Home room selection uses Matter Service Areas. Put each room's region id and name in `rooms`, plus `pmapId` and `userPmapvId`. A selected room starts a `cleanRoom` mission with `pmap_id`, `user_pmapv_id`, and `regions`.
+
+List those ids from a robot that is already on the network. Close the iRobot app first. If Homebridge is already connected to that robot, stop the plugin for a moment so the robot can accept this connection.
+
+```bash
+roomb-o-matic-list-rooms --ip 192.0.2.10 --blid YOUR_BLID --password YOUR_ROBOT_PASSWORD
+```
+
+The command prints map and room ids only.
+
+## Clean modes
+
+Matter advertises three RvcCleanMode values. One mode is not enough: Homebridge 2.5 / Matter.js 0.18 reject a list shorter than 2, and Apple Home then reports the accessory as not found.
+
+| Mode | Passes |
+| --- | --- |
+| Automatic | Robot default (`noAutoPasses: false`, `twoPass: false`) |
+| Deep Clean | Two passes (`noAutoPasses: true`, `twoPass: true`) |
+| Quick | One pass (`noAutoPasses: true`, `twoPass: false`) |
+
+The HomeKit Fan still starts and stops a clean. Its clean mode and selected rooms come from the device config until a Matter controller changes them.
+
+## Development
+
+```bash
+npm install
+npm test
+npm run lint
+npm run build
+```
+
+Do not put real BLIDs, passwords, Matter pairing codes, or personal addresses in this repository.

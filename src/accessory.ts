@@ -1,1047 +1,327 @@
-import type { RobotMission, RobotState, Roomba } from 'dorita980'
-import type { AccessoryPlugin, API, CharacteristicGetCallback, CharacteristicSetCallback, CharacteristicValue, Logging, PlatformAccessory, Service, WithUUID } from 'homebridge'
+import type { API, CharacteristicValue, Logging, PlatformAccessory, Service } from 'homebridge'
 
-import type RoombaPlatform from './Platform.HAP.js'
-import type { DeviceInfo, Robot } from './roomba.js'
-import type { DeviceConfig, RoombaPlatformConfig } from './settings.js'
+import type { LocalRobot } from 'dorita980'
 
 import dorita980 from 'dorita980'
 
-import { describeConnectTimeout } from './connectFailure.js'
+import {
+  applyCleaningPasses,
+  cleanModeFromNumber,
+  matterRoomAreas,
+  RUN_MODE_CLEANING,
+  RUN_MODE_IDLE,
+  startMission,
+} from './mission.js'
+import { buildMatterDefinition, phaseIsCleaning, phaseToOperational } from './matterVacuum.js'
+import { publicSerial, safeError } from './redact.js'
+import { sanitizeDevice } from './discoveryPlan.js'
+import type { CleanMode, DeviceConfig } from './settings.js'
 
-/**
- * How long to wait to connect to Roomba.
- */
-const CONNECT_TIMEOUT_MILLIS = 60_000
+export type RobotFactory = (
+  blid: string,
+  password: string,
+  ip: string,
+  onError: (error: unknown) => void,
+) => LocalRobot
 
-/**
- * How long after HomeKit has asked for the plugin's status should we continue frequently monitoring and reporting Roomba's status?
- */
-const USER_INTERESTED_MILLIS = 60_000
-
-/**
- * How long after Roomba has been active should we continue frequently monitoring and reporting Roomba's status?
- */
-const AFTER_ACTIVE_MILLIS = 120_000
-
-/**
- * How long will we wait for the Roomba to send status before giving up?
- */
-const STATUS_TIMEOUT_MILLIS = 60_000
-
-/**
- * Coalesce multiple refreshState requests into one when they're less than this many millis apart.
- */
-const REFRESH_STATE_COALESCE_MILLIS = 10_000
-
-const ROBOT_CIPHERS = ['AES128-SHA256', 'TLS_AES_256_GCM_SHA384']
-
-/**
- * Holds a connection to Roomba and tracks the number of uses to enable connections to be closed
- * when no longer in use.
- */
-interface RoombaHolder {
-  readonly roomba: Roomba
-  /**
-   * How many requests are currently using the current Roomba instance.
-   */
-  useCount: number
+export interface MatterBridge {
+  uuid?: { generate: (value: string) => string }
+  deviceTypes?: { RoboticVacuumCleaner?: unknown }
+  updateAccessoryState?: (uuid: string, cluster: string, attributes: Record<string, unknown>) => Promise<void>
 }
 
-interface Status {
-  timestamp: number
-  running?: boolean
-  docking?: boolean
-  charging?: boolean
-  /**
-   * Paused during a clean cycle.
-   */
-  paused?: boolean
-  /**
-   * A clean cycle is still under way, even if the Roomba is not moving right
-   * now - emptying into its dock, or recharging part-way through to resume.
-   */
-  missionActive?: boolean
-  batteryLevel?: number
-  binFull?: boolean
-  tankLevel?: number
+function defaultRobotFactory(blid: string, password: string, ip: string, onError: (error: unknown) => void): LocalRobot {
+  return new dorita980.Local(blid, password, ip, 2, { onError })
 }
 
-const EMPTY_STATUS: Status = {
-  timestamp: 0,
-}
+export class RoombaAccessory {
+  private readonly robot: LocalRobot
+  private readonly vacuumService: Service
+  private readonly dockService: Service
+  private readonly batteryService: Service
+  private readonly binSensorService: Service
+  private statePollInterval?: ReturnType<typeof setInterval>
+  private cleanMode: CleanMode
+  private selectedRoomIds: string[]
+  readonly matterUuid?: string
 
-type CharacteristicGetter = (callback: CharacteristicGetCallback, context: unknown, connection?: unknown) => void
-
-type CharacteristicValueExtractor = (status: Status) => CharacteristicValue | undefined
-
-const NO_VALUE = new Error('No value')
-
-async function delay(duration: number) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, duration)
-  })
-}
-
-export default class RoombaAccessory implements AccessoryPlugin {
-  private api: API
-  private log: Logging
-  private name: string
-  private model: string
-  private serialnum!: string
-  private blid: string
-  private robotpwd: string
-  private ipaddress: string
-  private cleanBehaviour: 'everywhere' | 'rooms'
-  private mission: RobotMission
-  private stopBehaviour: 'home' | 'pause'
-  private debug: boolean
-  private idlePollIntervalMillis: number
-  private deviceInfo?: DeviceInfo
-  private version: string
-
-  private accessoryInfo: Service
-  private filterMaintenance: Service
-  private switchService: Service
-  private batteryService: Service
-  private dockService?: Service
-  private runningService?: Service
-  private binService?: Service
-  private dockingService?: Service
-  private homeService?: Service
-  private tankService?: Service
-
-  /**
-   * The last known state from Roomba, if any.
-   */
-  private cachedStatus = EMPTY_STATUS
-
-  private lastUpdatedStatus = EMPTY_STATUS
-
-  private lastRefreshState = 0
-
-  /**
-   * The current promise that returns a Roomba instance (_only_ used in the connect() method).
-   */
-  private _currentRoombaPromise?: Promise<RoombaHolder>
-
-  /**
-   * Whether the plugin is actively polling Roomba's state and updating HomeKit
-   */
-  private currentPollTimeout?: ReturnType<typeof setTimeout>
-
-  /**
-   * When we think a user / HomeKit was last interested in Roomba's state.
-   */
-  private userLastInterestedTimestamp?: number
-
-  /**
-   * When we last saw the Roomba active.
-   */
-  private roombaLastActiveTimestamp?: number
-
-  /**
-   * The duration of the last poll interval used.
-   */
-  private lastPollInterval?: number
-
-  /**
-   * An index into `ROBOT_CIPHERS` indicating the current cipher configuration used to communicate with Roomba.
-   */
-  private currentCipherIndex = 0
-
-  public constructor(
-    readonly platform: RoombaPlatform,
-    accessory: PlatformAccessory,
-    log: Logging,
-    device: Robot & DeviceConfig,
-    config: RoombaPlatformConfig,
-    api: API,
+  constructor(
+    private readonly log: Logging,
+    private readonly api: API,
+    private readonly accessory: PlatformAccessory,
+    private device: DeviceConfig,
+    options?: { robotFactory?: RobotFactory, matter?: MatterBridge },
   ) {
-    this.api = api
-    this.log = log
-    this.debug = !!config.debug
-
-    if (!this.debug) {
-      this.log = log
-    } else {
-      this.log = Object.assign(log, {
-        debug: (message: string, ...parameters: unknown[]) => {
-          log.info(`DEBUG: ${message}`, ...parameters)
-        },
-      })
-    }
-
-    this.name = device.name
-    this.model = device.model
-    const { serialNumber, deviceInfo } = this.serialNum(device)
-    this.deviceInfo = deviceInfo
-    this.serialnum = serialNumber
-    this.blid = device.blid
-    this.robotpwd = device.password
-    this.ipaddress = device.ipaddress ?? device.ip
-    this.version = device.softwareVer ?? this.platform.version ?? '0.0.0'
-    this.cleanBehaviour = device.cleanBehaviour !== undefined ? device.cleanBehaviour : 'everywhere'
-    this.mission = device.mission || { pmap_id: 'local' }
-    this.stopBehaviour = device.stopBehaviour !== undefined ? device.stopBehaviour : 'home'
-    this.idlePollIntervalMillis = device.idleWatchInterval ? (device.idleWatchInterval * 60_000) : config.idleWatchInterval ? (config.idleWatchInterval * 60_000) : 900_000
-    const showDockAsContactSensor = device.dockContactSensor === undefined ? true : device.dockContactSensor
-    const showRunningAsContactSensor = device.runningContactSensor
-    const showBinStatusAsContactSensor = device.binContactSensor
-    const showDockingAsContactSensor = device.dockingContactSensor
-    const showHomeSwitch = device.homeSwitch
-    const showTankAsFilterMaintenance = device.tankContactSensor
-
-    const Service = api.hap.Service
-    const Characteristic = this.api.hap.Characteristic
-
-    function removeServiceIfPresent<T extends WithUUID<typeof Service>>(uuid: string | T, subType: string): void {
-      const service = accessory.getServiceById(uuid, subType)
-      if (service) {
-        accessory.removeService(service)
-      }
-    }
-
-    this.accessoryInfo = accessory.getService(Service.AccessoryInformation) || accessory.addService(Service.AccessoryInformation)
-    this.filterMaintenance = accessory.getService(Service.FilterMaintenance) || accessory.addService(Service.FilterMaintenance)
-    this.switchService = accessory.getService(this.name) || accessory.addService(Service.Switch, this.name)
-    this.switchService.setPrimaryService(true)
-    this.batteryService = accessory.getService(Service.Battery) || accessory.addService(Service.Battery)
-
-    const DOCK_SERVICE_NAME = `${this.name} Dock`
-    const RUNNING_SERVICE_NAME = `${this.name} Running`
-    const BIN_SERVICE_NAME = `${this.name} Bin Full`
-    const DOCKING_SERVICE_NAME = `${this.name} Docking`
-    const TANK_SERVICE_NAME = `${this.name} Water Tank Empty`
-    const HOME_SERVICE_NAME = `${this.name} Home`
-
-    if (showDockAsContactSensor) {
-      this.dockService = accessory.getServiceById(Service.ContactSensor, 'docked') || accessory.addService(Service.ContactSensor, DOCK_SERVICE_NAME, 'docked')
-    } else {
-      removeServiceIfPresent(Service.ContactSensor, 'docked')
-    }
-    if (showRunningAsContactSensor) {
-      this.runningService = accessory.getServiceById(Service.ContactSensor, 'running') || accessory.addService(Service.ContactSensor, RUNNING_SERVICE_NAME, 'running')
-    } else {
-      removeServiceIfPresent(Service.ContactSensor, 'running')
-    }
-    if (showBinStatusAsContactSensor) {
-      this.binService = accessory.getServiceById(Service.ContactSensor, 'Full') || accessory.addService(Service.ContactSensor, BIN_SERVICE_NAME, 'Full')
-    } else {
-      removeServiceIfPresent(Service.ContactSensor, 'Full')
-    }
-    if (showDockingAsContactSensor) {
-      this.dockingService = accessory.getServiceById(Service.ContactSensor, 'docking') || accessory.addService(Service.ContactSensor, DOCKING_SERVICE_NAME, 'docking')
-    } else {
-      removeServiceIfPresent(Service.ContactSensor, 'docking')
-    }
-    if (showTankAsFilterMaintenance) {
-      this.tankService = accessory.getServiceById(Service.FilterMaintenance, 'Empty') || accessory.addService(Service.FilterMaintenance, TANK_SERVICE_NAME, 'Empty')
-    } else {
-      removeServiceIfPresent(Service.FilterMaintenance, 'Empty')
-    }
-    if (showHomeSwitch) {
-      this.homeService = accessory.getServiceById(Service.Switch, 'returning') || accessory.addService(Service.Switch, HOME_SERVICE_NAME, 'returning')
-    } else {
-      removeServiceIfPresent(Service.Switch, 'returning')
-    }
-
-    // Set accessory information
-    this.accessoryInfo
-      .setCharacteristic(Characteristic.Manufacturer, 'iRobot')
-      .setCharacteristic(Characteristic.AppMatchingIdentifier, 'id1012014442')
-      .setCharacteristic(Characteristic.SerialNumber, this.serialnum)
-      .setCharacteristic(Characteristic.Identify, true)
-      .setCharacteristic(Characteristic.Name, this.name)
-      .setCharacteristic(Characteristic.Model, this.model)
-      .setCharacteristic(Characteristic.ProductData, this.blid)
-      .setCharacteristic(Characteristic.FirmwareRevision, this.version)
-
-    this.switchService
-      .setCharacteristic(Characteristic.Name, this.name)
-      .getCharacteristic(Characteristic.On)
-      .on('set', this.setRunningState.bind(this))
-      .on('get', this.createCharacteristicGetter('Running status', this.runningStatus))
-    this.batteryService
-      .getCharacteristic(Characteristic.BatteryLevel)
-      .on('get', this.createCharacteristicGetter('Battery level', this.batteryLevelStatus))
-    this.batteryService
-      .getCharacteristic(Characteristic.ChargingState)
-      .on('get', this.createCharacteristicGetter('Charging status', this.chargingStatus))
-    this.batteryService
-      .getCharacteristic(Characteristic.StatusLowBattery)
-      .on('get', this.createCharacteristicGetter('Low Battery status', this.batteryStatus))
-    this.filterMaintenance
-      .getCharacteristic(Characteristic.FilterChangeIndication)
-      .on('get', this.createCharacteristicGetter('Bin status', this.binStatus))
-
-    if (this.dockService) {
-      this.dockService
-        .setCharacteristic(Characteristic.Name, DOCK_SERVICE_NAME)
-        .getCharacteristic(Characteristic.ContactSensorState)
-        .on('get', this.createCharacteristicGetter('Dock status', this.dockedStatus))
-    }
-    if (this.runningService) {
-      this.runningService
-        .setCharacteristic(Characteristic.Name, RUNNING_SERVICE_NAME)
-        .getCharacteristic(Characteristic.ContactSensorState)
-        .on('get', this.createCharacteristicGetter('Running status', this.runningStatus))
-    }
-    if (this.binService) {
-      this.binService
-        .setCharacteristic(Characteristic.Name, BIN_SERVICE_NAME)
-        .getCharacteristic(Characteristic.ContactSensorState)
-        .on('get', this.createCharacteristicGetter('Bin status', this.binStatus))
-    }
-    if (this.dockingService) {
-      this.dockingService
-        .setCharacteristic(Characteristic.Name, DOCKING_SERVICE_NAME)
-        .getCharacteristic(Characteristic.ContactSensorState)
-        .on('get', this.createCharacteristicGetter('Docking status', this.dockingStatus))
-    }
-    if (this.homeService) {
-      this.homeService
-        .setCharacteristic(Characteristic.Name, HOME_SERVICE_NAME)
-        .getCharacteristic(Characteristic.On)
-        .on('set', this.setDockingState.bind(this))
-        .on('get', this.createCharacteristicGetter('Returning Home', this.dockingStatus))
-    }
-    if (this.tankService) {
-      this.tankService
-        .setCharacteristic(Characteristic.Name, TANK_SERVICE_NAME)
-        .getCharacteristic(Characteristic.FilterChangeIndication)
-        .on('get', this.createCharacteristicGetter('Tank status', this.tankStatus))
-      this.tankService
-        .getCharacteristic(Characteristic.FilterLifeLevel)
-        .on('get', this.createCharacteristicGetter('Tank level', this.tankLevelStatus))
-    }
-
-    this.startPolling()
-  }
-
-  private serialNum(device: Robot & DeviceConfig) {
-    let deviceInfo: DeviceInfo | undefined
-    let serialNumber: string
-    const serialNum = device.ipaddress ?? device.ip
-    if (device.info) {
-      deviceInfo = device.info
-      if (device.info.serialNum) {
-        serialNumber = device.info.serialNum
-        return { serialNumber, deviceInfo }
-      } else {
-        serialNumber = serialNum
-        return { serialNumber, deviceInfo }
-      }
-    } else {
-      deviceInfo = undefined
-      serialNumber = serialNum
-      return { serialNumber, deviceInfo }
-    }
-  }
-
-  public identify() {
-    this.log.info('Identify requested')
-    this.connect(async (error, roomba) => {
-      if (error || !roomba) {
-        return
-      }
-      try {
-        await roomba.find()
-      } catch (error) {
-        this.log.warn('Roomba failed to locate: %s', (error as Error).message)
-      }
+    this.device = sanitizeDevice(device)
+    const { blid, robotpwd, ipaddress, name } = this.device
+    const factory = options?.robotFactory ?? defaultRobotFactory
+    this.robot = factory(blid, robotpwd, ipaddress, (error) => {
+      this.log.error(`${this.device.name}: local connection error — ${safeError(error, [this.device.robotpwd, this.device.blid])}`)
     })
-  }
+    this.cleanMode = this.device.cleanMode ?? 'automatic'
+    this.selectedRoomIds = (this.device.rooms ?? []).filter(room => room.selected).map(room => room.id)
+    const matter = options?.matter
+    this.matter = matter
+    const matterSeed = publicSerial(blid)
+    this.matterUuid = matter?.uuid?.generate(matterSeed) ?? this.api.hap.uuid.generate(matterSeed)
 
-  public getServices(): Service[] {
-    const services: Service[] = [
-      this.accessoryInfo,
-      this.switchService,
-      this.batteryService,
-      this.filterMaintenance,
-    ]
+    this.vacuumService = this.service(this.api.hap.Service.Fan, name, 'vacuum')
+    this.vacuumService
+      .getCharacteristic(this.api.hap.Characteristic.On)
+      .onSet(value => this.handleActiveSet(value))
 
-    if (this.dockService) {
-      services.push(this.dockService)
+    this.dockService = this.service(this.api.hap.Service.Switch, `${name} Dock`, 'dock')
+    this.dockService
+      .getCharacteristic(this.api.hap.Characteristic.On)
+      .onSet(value => this.handleDockSet(value))
+
+    this.batteryService = this.service(this.api.hap.Service.Battery, name, 'battery')
+    this.binSensorService = this.service(this.api.hap.Service.ContactSensor, `${name} Bin`, 'bin')
+
+    if (typeof this.robot.getRobotState === 'function') {
+      this.log.info(`${this.device.name}: Advanced state polling enabled.`)
+      void this.fetchHybridState()
+      this.statePollInterval = setInterval(() => {
+        void this.fetchHybridState()
+      }, 60_000)
     }
-    if (this.runningService) {
-      services.push(this.runningService)
+    else if (typeof this.robot.getStatus === 'function') {
+      this.log.info(`${this.device.name}: Legacy state polling enabled.`)
+      void this.fetchLegacyState()
+      this.statePollInterval = setInterval(() => {
+        void this.fetchLegacyState()
+      }, 60_000)
     }
-    if (this.binService) {
-      services.push(this.binService)
+    else {
+      this.log.warn(`${this.device.name}: No state polling supported on this model.`)
     }
-    if (this.dockingService) {
-      services.push(this.dockingService)
-    }
-    if (this.homeService) {
-      services.push(this.homeService)
-    }
-    if (this.tankService) {
-      services.push(this.tankService)
-    }
-
-    return services
+    this.statePollInterval?.unref?.()
   }
 
-  /**
-   * Refresh our knowledge of Roomba's state by connecting to Roomba and getting its status.
-   * @param callback a function to call when the state refresh has completed.
-   */
-  private refreshState(callback: (success: boolean) => void): void {
-    const now = Date.now()
+  private matter?: MatterBridge
 
-    this.connect(async (error, roomba) => {
-      if (error || !roomba) {
-        this.log.warn('Failed to refresh Roomba\'s state: %s', error ? error.message : 'Unknown')
-        callback(false)
-        return
-      }
-
-      const startedWaitingForStatus = Date.now()
-
-      /* Wait until we've received a state with all of the information we desire */
-      return new Promise<void>((resolve) => {
-        let receivedState: RobotState | undefined
-
-        const timeout = setTimeout(() => {
-          this.log.debug(
-            'Timeout waiting for full state from Roomba ({}ms). Last state received was: %s',
-            Date.now() - startedWaitingForStatus,
-            receivedState ? JSON.stringify(receivedState) : '<none>',
-          )
-          resolve()
-          callback(false)
-        }, STATUS_TIMEOUT_MILLIS)
-
-        const updateState = (state: RobotState) => {
-          receivedState = state
-
-          if (this.receivedRobotStateIsComplete(state)) {
-            clearTimeout(timeout)
-
-            /* NB: the actual state is received and updated in the listener in connect() */
-            this.log.debug(
-              'Refreshed Roomba\'s state in %ims: %s',
-              Date.now() - now,
-              JSON.stringify(state),
-            )
-
-            roomba.off('state', updateState)
-            resolve()
-            callback(true)
-          }
-        }
-        roomba.on('state', updateState)
-      })
-    })
+  private service(type: any, name: string, subtype: string): Service {
+    return this.accessory.getServiceById(type, subtype) ?? this.accessory.addService(type, name, subtype)
   }
 
-  private receivedRobotStateIsComplete(state: RobotState) {
-    return (state.batPct !== undefined && state.bin !== undefined && state.cleanMissionStatus !== undefined)
-  }
-
-  private receiveRobotState(state: RobotState) {
-    const parsed = this.parseState(state)
-    this.mergeCachedStatus(parsed)
-
-    return true
-  }
-
-  /**
-   * Returns a Promise that, when resolved, provides access to a connected Roomba instance.
-   * In order to reuse connected Roomba instances, this function returns the same Promise across
-   * multiple calls, until that Roomba instance is disconnected.
-   * <p>
-   * If the Promise fails it means there was a failure connecting to the Roomba instance.
-   * @returns a RoombaHolder containing a connected Roomba instance
-   */
-  private async connectedRoomba(attempts = 0): Promise<RoombaHolder> {
-    return new Promise<RoombaHolder>((resolve, reject) => {
-      let connected = false
-      let failed = false
-      /*
-       * The last error seen during this attempt, so a timeout can say WHY it
-       * gave up (#167). `onError` below detaches itself after the first error,
-       * so anything after that - including every error on an attempt that went
-       * on to retry with a different cipher - was previously unobservable.
-       */
-      let lastError: Error | undefined
-
-      const roomba = new dorita980.Local(this.blid, this.robotpwd, this.ipaddress, 2, {
-        ciphers: ROBOT_CIPHERS[this.currentCipherIndex],
-      })
-
-      const startConnecting = Date.now()
-      const timeout = setTimeout(() => {
-        failed = true
-
-        this.log.debug('Timed out after %ims trying to connect to Roomba', Date.now() - startConnecting)
-
-        roomba.end()
-        reject(new Error(describeConnectTimeout(this.ipaddress, Date.now() - startConnecting, lastError)))
-      }, CONNECT_TIMEOUT_MILLIS)
-
-      roomba.on('state', (state) => {
-        this.receiveRobotState(state)
-      })
-
-      /* Stays attached for the whole attempt, unlike onError below. */
-      roomba.on('error', (error: Error) => {
-        lastError = error
-      })
-
-      const onError = (error: Error) => {
-        this.log.debug('Connection received error: %s', error.message)
-
-        roomba.off('error', onError)
-        roomba.end()
-        clearTimeout(timeout)
-
-        if (!connected) {
-          failed = true
-
-          /* Check for recoverable errors */
-          if (error instanceof Error && shouldTryDifferentCipher(error) && attempts < ROBOT_CIPHERS.length) {
-            /* Perhaps a cipher error, so we retry using the next cipher */
-            this.currentCipherIndex = (this.currentCipherIndex + 1) % ROBOT_CIPHERS.length
-            this.log.debug('Retrying connection to Roomba with cipher %s', ROBOT_CIPHERS[this.currentCipherIndex])
-            this.connectedRoomba(attempts + 1).then(resolve).catch(reject)
-          } else {
-            reject(error)
-          }
-        }
-      }
-      roomba.on('error', onError)
-
-      this.log.debug('Connecting to Roomba...')
-
-      const onConnect = () => {
-        roomba.off('connect', onConnect)
-        clearTimeout(timeout)
-
-        if (failed) {
-          this.log.debug('Connection established to Roomba after failure')
-          return
-        }
-
-        connected = true
-
-        this.log.debug('Connected to Roomba in %ims', Date.now() - startConnecting)
-        resolve({
-          roomba,
-          useCount: 0,
-        })
-      }
-      roomba.on('connect', onConnect)
-    })
-  }
-
-  private connect(callback: (error: Error | null, roomba?: Roomba) => Promise<void>): void {
-    /* Use the current Promise, if possible, so we share the connected Roomba instance, whether
-           it is already connected, or when it becomes connected.
-         */
-    this.log.debug('currentRoombaPromise: %s', this._currentRoombaPromise ? 'yes' : 'no')
-    const promise = this._currentRoombaPromise || this.connectedRoomba()
-    this._currentRoombaPromise = promise
-
-    promise.then((holder) => {
-      holder.useCount++
-      callback(null, holder.roomba).finally(() => {
-        holder.useCount--
-
-        if (holder.useCount <= 0) {
-          this._currentRoombaPromise = undefined
-          holder.roomba.end()
-        } else {
-          this.log.debug('Leaving Roomba instance with %i ongoing requests', holder.useCount)
-        }
-      })
-    }).catch((error) => {
-      /* Failed to connect to Roomba */
-      this._currentRoombaPromise = undefined
-      callback(error)
-    })
-  }
-
-  private setRunningState(powerOn: CharacteristicValue, callback: CharacteristicSetCallback) {
-    if (powerOn) {
-      this.log.info('Starting Roomba')
-
-      this.connect(async (error, roomba) => {
-        if (error || !roomba) {
-          callback(error || new Error('Unknown error'))
-          return
-        }
-
-        try {
-          /* If Roomba is paused in a clean cycle we need to instruct it to resume instead, otherwise we just start a clean. */
-          if (this.cachedStatus.paused) {
-            await roomba.resume()
-          } else {
-            if (this.cleanBehaviour === 'rooms') {
-              await roomba.cleanRoom(this.mission)
-              this.log.debug('Roomba is cleaning your rooms')
-            } else {
-              await roomba.clean()
-              this.log.debug('Roomba is running')
-            }
-          }
-
-          callback()
-
-          /* After sending an action to Roomba, we start polling to ensure HomeKit has up to date status */
-          this.refreshStatusForUser()
-        } catch (error) {
-          this.log.warn('Roomba failed: %s', (error as Error).message)
-
-          callback(error as Error)
-        }
-      })
-    } else {
-      this.log.info('Stopping Roomba')
-
-      this.connect(async (error, roomba) => {
-        if (error || !roomba) {
-          callback(error || new Error('Unknown error'))
-          return
-        }
-
-        try {
-          const response = await roomba.getRobotState(['cleanMissionStatus'])
-          const state = this.parseState(response)
-
-          if (state.running) {
-            this.log.debug('Roomba is pausing')
-
-            await roomba.pause()
-
-            callback()
-
-            if (this.stopBehaviour === 'home') {
-              this.log.debug('Roomba paused, returning to Dock')
-              await this.dockWhenStopped(roomba, 3000)
-            } else {
-              this.log.debug('Roomba is paused')
-            }
-          } else if (state.docking) {
-            this.log.debug('Roomba is docking')
-            await roomba.pause()
-
-            callback()
-
-            this.log.debug('Roomba paused')
-          } else if (state.charging) {
-            this.log.debug('Roomba is already docked')
-            callback()
-          } else {
-            this.log.debug('Roomba is not running')
-            callback()
-          }
-
-          this.refreshStatusForUser()
-        } catch (error) {
-          this.log.warn('Roomba failed: %s', (error as Error).message)
-
-          callback(error as Error)
-        }
-      })
-    }
-  }
-
-  private setDockingState(docking: CharacteristicValue, callback: CharacteristicSetCallback) {
-    this.log.debug('Setting docking state to %s', JSON.stringify(docking))
-
-    this.connect(async (error, roomba) => {
-      if (error || !roomba) {
-        callback(error || new Error('Unknown error'))
-        return
-      }
-
-      try {
-        if (docking) {
-          await roomba.dock()
-          this.log.debug('Roomba is docking')
-        } else {
-          await roomba.pause()
-          this.log.debug('Roomba is paused')
-        }
-
-        callback()
-
-        /* After sending an action to Roomba, we start polling to ensure HomeKit has up to date status */
-        this.refreshStatusForUser()
-      } catch (error) {
-        this.log.warn('Roomba failed: %s', (error as Error).message)
-
-        callback(error as Error)
-      }
-    })
-  }
-
-  private async dockWhenStopped(roomba: Roomba, pollingInterval: number) {
+  async handleActiveSet(value: CharacteristicValue): Promise<void> {
     try {
-      const state = await roomba.getRobotState(['cleanMissionStatus'])
-
-      switch (state.cleanMissionStatus!.phase) {
-        case 'stop':
-          this.log.debug('Roomba has stopped, issuing dock request')
-
-          await roomba.dock()
-
-          this.log.debug('Roomba docking')
-
-          this.refreshStatusForUser()
-
-          break
-        case 'run':
-          this.log.debug('Roomba is still running. Will check again in %is', pollingInterval / 1000)
-
-          await delay(pollingInterval)
-
-          this.log.debug('Trying to dock again...')
-          await this.dockWhenStopped(roomba, pollingInterval)
-
-          break
-        default:
-          this.log.debug('Roomba is not running')
-
-          break
+      if (value) {
+        this.log.info(`${this.device.name}: Starting cleaning`)
+        await this.startSelectedClean()
       }
-    } catch (error) {
-      this.log.warn('Roomba failed to dock: %s', (error as Error).message)
+      else {
+        this.log.info(`${this.device.name}: Stopping cleaning`)
+        await this.robot.stop()
+      }
+    }
+    catch (error) {
+      this.log.error(`${this.device.name}: Vacuum command failed — ${safeError(error, [this.device.robotpwd, this.device.blid])}`)
     }
   }
 
-  /**
-   * Creates as a Characteristic getter function that derives the CharacteristicValue from Roomba's status.
-   */
-  private createCharacteristicGetter(name: string, extractValue: CharacteristicValueExtractor): CharacteristicGetter {
-    return (callback: CharacteristicGetCallback) => {
-      /* Calculate the max age of cached information based on how often we're refreshing Roomba's status */
-      const maxCacheAge = (this.lastPollInterval || 0) + STATUS_TIMEOUT_MILLIS * 2
-
-      const returnCachedStatus = (status: Status) => {
-        const value = extractValue(status)
-        if (value === undefined) {
-          this.log.debug('%s: Returning no value (%s old, max %s)', name, millisToString(Date.now() - status.timestamp!), millisToString(maxCacheAge))
-          callback(NO_VALUE)
-        } else {
-          this.log.debug('%s: Returning %s (%s old, max %s)', name, String(value), millisToString(Date.now() - status.timestamp!), millisToString(maxCacheAge))
-          callback(null, value)
-        }
+  async handleDockSet(value: CharacteristicValue): Promise<void> {
+    try {
+      if (value) {
+        this.log.info(`${this.device.name}: Sending to dock`)
+        await this.robot.dock()
       }
-
-      this.refreshStatusForUser()
-
-      if (Date.now() - this.cachedStatus.timestamp < maxCacheAge) {
-        returnCachedStatus(this.cachedStatus)
-      } else {
-        /* Wait a short period of time (not too long for Homebridge) for a value to be received by a status check so we can report it */
-        setTimeout(() => {
-          if (Date.now() - this.cachedStatus.timestamp < maxCacheAge) {
-            returnCachedStatus(this.cachedStatus)
-          } else {
-            this.log.debug('%s: Returning no value due to timeout', name)
-            callback(NO_VALUE)
-          }
-        }, 500)
-      }
+    }
+    catch (error) {
+      this.log.error(`${this.device.name}: Dock command failed — ${safeError(error, [this.device.robotpwd, this.device.blid])}`)
     }
   }
 
-  /**
-   * Merge in changes to the cached status, and update our characteristics so the plugin
-   * preemptively reports state back to Homebridge.
-   */
-  private mergeCachedStatus(status: Partial<Status>) {
-    this.setCachedStatus({
-      ...this.cachedStatus,
-      timestamp: Date.now(),
-      ...status,
+  async startSelectedClean(): Promise<'rooms' | 'everywhere'> {
+    const result = await startMission(this.robot, {
+      mode: this.cleanMode,
+      pmapId: this.device.pmapId,
+      userPmapvId: this.device.userPmapvId,
+      rooms: this.device.rooms ?? [],
+      selectedRoomIds: this.selectedRoomIds,
     })
-    if (Object.keys(status).length > 1) {
-      this.log.debug('Merged updated state %s => %s', JSON.stringify(status), JSON.stringify(this.cachedStatus))
+    if (result === 'rooms') {
+      this.log.info(`${this.device.name}: Started a room mission`)
     }
+    return result
+  }
 
-    if (this.isActive()) {
-      this.roombaLastActiveTimestamp = Date.now()
+  async setCleanMode(mode: CleanMode): Promise<void> {
+    this.cleanMode = mode
+    await applyCleaningPasses(this.robot, mode)
+  }
+
+  async fetchHybridState(): Promise<void> {
+    if (!this.robot.getRobotState) {
+      return
+    }
+    try {
+      const state = await this.robot.getRobotState(['batPct', 'bin', 'cleanMissionStatus'])
+      const battery = numberOrZero(state.batPct)
+      const mission = state.cleanMissionStatus as { phase?: string } | undefined
+      const phase = mission?.phase
+      const charging = phase === 'charge'
+      const bin = state.bin as { full?: boolean } | undefined
+      const binFull = Boolean(bin?.full ?? false)
+      this.updateCharacteristics(battery, charging, binFull)
+      this.syncFan(phaseIsCleaning(phase))
+      await this.pushMatter(battery, charging, phase)
+    }
+    catch (error) {
+      this.log.error(`${this.device.name}: Hybrid state fetch failed — ${safeError(error, [this.device.robotpwd, this.device.blid])}`)
     }
   }
 
-  /**
-   * Update the cached status and update our characteristics so the plugin preemptively
-   * reports state back to Homebridge.
-   */
-  private setCachedStatus(status: Status) {
-    this.cachedStatus = status
-    this.updateCharacteristics(status)
-  }
-
-  private parseState(state: RobotState & { tankLvl?: number }) {
-    const status: Status = {
-      timestamp: Date.now(),
+  async fetchLegacyState(): Promise<void> {
+    if (!this.robot.getStatus) {
+      return
     }
-
-    if (state.batPct !== undefined) {
-      status.batteryLevel = state.batPct
+    try {
+      const state = await this.robot.getStatus()
+      const battery = numberOrZero(state.battery)
+      const charging = Boolean(state.charging)
+      const binFull = Boolean(state.binFull ?? false)
+      this.updateCharacteristics(battery, charging, binFull)
+      await this.pushMatter(battery, charging, charging ? 'charge' : undefined)
     }
-    if (state.bin !== undefined) {
-      status.binFull = state.bin.full
-    }
-    if (state.tankLvl !== undefined) {
-      status.tankLevel = state.tankLvl
-    }
-
-    if (state.cleanMissionStatus !== undefined) {
-      /* See https://www.openhab.org/addons/bindings/irobot/ for a list of phases */
-      switch (state.cleanMissionStatus.phase) {
-        case 'run':
-          status.running = true
-          status.charging = false
-          status.docking = false
-
-          break
-        case 'charge':
-        case 'recharge':
-          status.running = false
-          // The Roomba keeps reporting the 'charge' phase while docked even once
-          // fully charged, so treat a full battery as done charging (#223)
-          status.charging = status.batteryLevel === undefined || status.batteryLevel < 100
-          status.docking = false
-
-          break
-        case 'hmUsrDock':
-        case 'hmMidMsn':
-        case 'hmPostMsn':
-          status.running = false
-          status.charging = false
-          status.docking = true
-
-          break
-        case 'stop':
-        case 'stuck':
-        case 'evac':
-          status.running = false
-          status.charging = false
-          status.docking = false
-
-          break
-        default:
-          this.log.warn('Unsupported phase: %s', state.cleanMissionStatus!.phase)
-
-          status.running = false
-          status.charging = false
-          status.docking = false
-
-          break
-      }
-      // Only paused when genuinely stopped part-way through a clean, so a Roomba
-      // that finished and returned to the dock is not reported as paused (#226).
-      status.paused = state.cleanMissionStatus.phase === 'stop' && state.cleanMissionStatus.cycle === 'clean'
-      // The cycle only drops to 'none' once the job is genuinely over, so this
-      // stays true while the Roomba is emptying into its dock or recharging
-      // part-way through a clean, both of which look idle from the phase alone.
-      // Polling has to stay quick through those, or a Roomba that resumes
-      // cleaning is not noticed until the next idle poll - up to 15 minutes of
-      // HomeKit insisting it is not cleaning while it is (#226).
-      status.missionActive = state.cleanMissionStatus.cycle !== 'none'
-    }
-
-    return status
-  }
-
-  private updateCharacteristics(status: Status) {
-    // this.log.debug("Updating characteristics for status: %s", JSON.stringify(status));
-
-    const updateCharacteristic = (service: Service, characteristicId: typeof Characteristic.On, extractValue: CharacteristicValueExtractor) => {
-      const value = extractValue(status)
-      if (value !== undefined) {
-        const previousValue = extractValue(this.lastUpdatedStatus)
-        if (value !== previousValue) {
-          this.log.debug(
-            'Updating %s %s from %s to %s',
-            service.displayName,
-            service.getCharacteristic(characteristicId).displayName,
-            String(previousValue),
-            String(value),
-          )
-          service.updateCharacteristic(characteristicId, value)
-        }
-      }
-    }
-
-    const Characteristic = this.api.hap.Characteristic
-
-    updateCharacteristic(this.switchService, Characteristic.On, this.runningStatus)
-    updateCharacteristic(this.batteryService, Characteristic.ChargingState, this.chargingStatus)
-    updateCharacteristic(this.batteryService, Characteristic.BatteryLevel, this.batteryLevelStatus)
-    updateCharacteristic(this.batteryService, Characteristic.StatusLowBattery, this.batteryStatus)
-    updateCharacteristic(this.filterMaintenance, Characteristic.FilterChangeIndication, this.binStatus)
-    if (this.dockService) {
-      updateCharacteristic(this.dockService, Characteristic.ContactSensorState, this.dockedStatus)
-    }
-    if (this.runningService) {
-      updateCharacteristic(this.runningService, Characteristic.ContactSensorState, this.runningStatus)
-    }
-    if (this.binService) {
-      updateCharacteristic(this.binService, Characteristic.ContactSensorState, this.binStatus)
-    }
-    if (this.dockingService) {
-      updateCharacteristic(this.dockingService, Characteristic.ContactSensorState, this.dockingStatus)
-    }
-    if (this.homeService) {
-      updateCharacteristic(this.homeService, Characteristic.On, this.dockingStatus)
-    }
-    if (this.tankService) {
-      updateCharacteristic(this.tankService, Characteristic.FilterChangeIndication, this.tankStatus)
-      updateCharacteristic(this.tankService, Characteristic.FilterLifeLevel, this.tankLevelStatus)
-    }
-
-    this.lastUpdatedStatus = {
-      ...this.lastUpdatedStatus,
-      ...status,
+    catch (error) {
+      this.log.error(`${this.device.name}: Legacy state fetch failed — ${safeError(error, [this.device.robotpwd, this.device.blid])}`)
     }
   }
 
-  /**
-   * Trigger a refresh of Roomba's status for a user.
-   */
-  private refreshStatusForUser() {
-    this.userLastInterestedTimestamp = Date.now()
-    this.startPolling(true)
+  updateCharacteristics(battery: number, charging: boolean, binFull: boolean): void {
+    this.batteryService.setCharacteristic(this.api.hap.Characteristic.BatteryLevel, battery)
+    this.batteryService.setCharacteristic(
+      this.api.hap.Characteristic.ChargingState,
+      charging
+        ? this.api.hap.Characteristic.ChargingState.CHARGING
+        : this.api.hap.Characteristic.ChargingState.NOT_CHARGING,
+    )
+    this.binSensorService.setCharacteristic(
+      this.api.hap.Characteristic.ContactSensorState,
+      binFull
+        ? this.api.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
+        : this.api.hap.Characteristic.ContactSensorState.CONTACT_DETECTED,
+    )
   }
 
-  /**
-   * Start polling Roomba's status and reporting updates to HomeKit.
-   * We start polling whenever an event occurs, so we update HomeKit promptly
-   * when the status changes.
-   */
-  private startPolling(adhoc?: boolean) {
-    const checkStatus = (adhoc: boolean) => {
-      const now = Date.now()
-      if (!adhoc || now - this.lastRefreshState > REFRESH_STATE_COALESCE_MILLIS) {
-        this.lastRefreshState = now
-
-        if (adhoc) {
-          this.log.debug('Refreshing Roomba\'s status')
-        } else {
-          this.log.debug('Automatically refreshing Roomba\'s status')
-        }
-
-        /* Cancel any existing timeout */
-        if (this.currentPollTimeout) {
-          clearTimeout(this.currentPollTimeout)
-          this.currentPollTimeout = undefined
-        }
-
-        this.refreshState(() => {
-          const interval = this.currentPollInterval()
-          this.lastPollInterval = interval
-          this.log.debug('Will refresh Roomba\'s status again automatically in %s', millisToString(interval))
-
-          if (this.currentPollTimeout) {
-            clearTimeout(this.currentPollTimeout)
-            this.currentPollTimeout = undefined
+  buildMatterDefinition(deviceType: unknown): ReturnType<typeof buildMatterDefinition> | undefined {
+    if (!this.matterUuid) {
+      return undefined
+    }
+    return buildMatterDefinition({
+      uuid: this.matterUuid,
+      name: this.device.name,
+      serialNumber: publicSerial(this.device.blid),
+      deviceType,
+      model: this.device.model,
+      firmwareRevision: this.device.softwareVer,
+      cleanMode: this.cleanMode,
+      rooms: this.device.rooms ?? [],
+      selectedRoomIds: this.selectedRoomIds,
+      handlers: {
+        changeCleanMode: async (request) => {
+          const mode = cleanModeFromNumber(request.newMode ?? -1)
+          if (!mode) {
+            throw new Error('Unsupported clean mode')
           }
-          this.currentPollTimeout = setTimeout(checkStatus, interval, false)
-        })
-      }
-    }
-
-    checkStatus(adhoc || false)
+          this.log.info(`${this.device.name}: Clean mode ${mode}`)
+          await this.setCleanMode(mode)
+        },
+        changeRunMode: async (request) => {
+          if (request.newMode === RUN_MODE_CLEANING) {
+            await this.startSelectedClean()
+            return
+          }
+          if (request.newMode === RUN_MODE_IDLE) {
+            await this.robot.stop()
+            return
+          }
+          throw new Error('Unsupported run mode')
+        },
+        selectAreas: async (request) => {
+          const areas = matterRoomAreas(this.device.rooms ?? [])
+          const requested = request.newAreas ?? []
+          const roomIds: string[] = []
+          for (const areaId of requested) {
+            const area = areas.find(candidate => candidate.areaId === areaId)
+            if (!area) {
+              throw new Error('Unknown room selection')
+            }
+            roomIds.push(area.roomId)
+          }
+          this.selectedRoomIds = roomIds
+          this.log.info(`${this.device.name}: Selected ${roomIds.length} room(s)`)
+        },
+        pause: async () => {
+          if (this.robot.pause) {
+            await this.robot.pause()
+            return
+          }
+          await this.robot.stop()
+        },
+        resume: async () => {
+          await this.startSelectedClean()
+        },
+        goHome: async () => {
+          this.log.info(`${this.device.name}: Sending to dock`)
+          await this.robot.dock()
+        },
+      },
+    })
   }
 
-  private currentPollInterval = () => {
-    /* Check if the user is still interested */
-    const timeSinceUserLastInterested = Date.now() - (this.userLastInterestedTimestamp || 0)
-    if (timeSinceUserLastInterested < USER_INTERESTED_MILLIS) {
-      /* HomeKit is actively querying Roomba's status so a user may be interested */
-      return 5_000
+  dispose(): void {
+    if (this.statePollInterval) {
+      clearInterval(this.statePollInterval)
+      this.statePollInterval = undefined
     }
-
-    const timeSinceLastActive = Date.now() - (this.roombaLastActiveTimestamp || 0)
-    if (this.isActive() || timeSinceLastActive < AFTER_ACTIVE_MILLIS) {
-      /* Roomba is actively doing things */
-      return 10_000
+    try {
+      this.robot.end?.()
     }
-
-    /* Roomba is idle */
-    return this.idlePollIntervalMillis
+    catch {
+      // Disconnect errors are not actionable here.
+    }
   }
 
-  private isActive(): boolean {
-    return this.cachedStatus.running || this.cachedStatus.docking || this.cachedStatus.missionActive || false
+  private syncFan(cleaning: boolean): void {
+    const service = this.vacuumService as Service & {
+      updateCharacteristic?: (characteristic: unknown, value: CharacteristicValue) => void
+    }
+    if (service.updateCharacteristic) {
+      service.updateCharacteristic(this.api.hap.Characteristic.On, cleaning)
+      return
+    }
+    service.setCharacteristic(this.api.hap.Characteristic.On, cleaning)
   }
 
-  private runningStatus = (status: Status) => status.running === undefined
-    ? undefined
-    : status.running
-      ? 1
-      : 0
-
-  private chargingStatus = (status: Status) => status.charging === undefined
-    ? undefined
-    : status.charging
-      ? this.api.hap.Characteristic.ChargingState.CHARGING
-      : this.api.hap.Characteristic.ChargingState.NOT_CHARGING
-
-  private dockingStatus = (status: Status) => status.docking === undefined
-    ? undefined
-    : status.docking
-      ? this.api.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
-      : this.api.hap.Characteristic.ContactSensorState.CONTACT_DETECTED
-
-  private dockedStatus = (status: Status) => status.charging === undefined
-    ? undefined
-    : status.charging
-      ? this.api.hap.Characteristic.ContactSensorState.CONTACT_DETECTED
-      : this.api.hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
-
-  private batteryLevelStatus = (status: Status) => status.batteryLevel === undefined
-    ? undefined
-    : status.batteryLevel
-
-  private binStatus = (status: Status) => status.binFull === undefined
-    ? undefined
-    : status.binFull
-      ? this.api.hap.Characteristic.FilterChangeIndication.CHANGE_FILTER
-      : this.api.hap.Characteristic.FilterChangeIndication.FILTER_OK
-
-  private batteryStatus = (status: Status) => status.batteryLevel === undefined
-    ? undefined
-    : status.batteryLevel <= 20
-      ? this.api.hap.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW
-      : this.api.hap.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL
-
-  private tankStatus = (status: Status) => status.tankLevel === undefined
-    ? undefined
-    : status.tankLevel
-      ? this.api.hap.Characteristic.FilterChangeIndication.FILTER_OK
-      : this.api.hap.Characteristic.FilterChangeIndication.CHANGE_FILTER
-
-  private tankLevelStatus = (status: Status) => status.tankLevel === undefined
-    ? undefined
-    : status.tankLevel
+  private async pushMatter(battery: number, charging: boolean, phase: string | undefined): Promise<void> {
+    if (!this.matter?.updateAccessoryState || !this.matterUuid) {
+      return
+    }
+    const percent = Math.max(0, Math.min(200, Math.round(battery * 2)))
+    try {
+      await this.matter.updateAccessoryState(this.matterUuid, 'powerSource', {
+        batPercentRemaining: percent,
+        batChargeLevel: battery <= 15 ? 1 : 0,
+      })
+      await this.matter.updateAccessoryState(this.matterUuid, 'rvcOperationalState', {
+        operationalState: phaseToOperational(phase, charging),
+      })
+      await this.matter.updateAccessoryState(this.matterUuid, 'rvcRunMode', {
+        currentMode: phaseIsCleaning(phase) ? RUN_MODE_CLEANING : RUN_MODE_IDLE,
+      })
+    }
+    catch (error) {
+      this.log.error(`${this.device.name}: Matter state update failed — ${safeError(error, [this.device.robotpwd, this.device.blid])}`)
+    }
+  }
 }
 
-function millisToString(millis: number): string {
-  if (millis < 1_000) {
-    return `${millis}ms`
-  } else if (millis < 60_000) {
-    return `${Math.round((millis / 1000) * 10) / 10}s`
-  } else {
-    return `${Math.round((millis / 60_000) * 10) / 10}m`
+function numberOrZero(value: unknown): number {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(parsed)) {
+    return 0
   }
-}
-
-function shouldTryDifferentCipher(error: Error) {
-  /* Explicit TLS errors definitely suggest a different cipher should be used */
-  if (error.message.includes('TLS')) {
-    return true
-  }
-  /* We have seen this error connecting to an i1+ https://github.com/homebridge-plugins/homebridge-roomba/issues/129#issuecomment-1520733025 */
-  if (error.message.toLowerCase().includes('identifier rejected')) {
-    return true
-  }
-  return false
+  return Math.max(0, Math.min(100, Math.round(parsed)))
 }

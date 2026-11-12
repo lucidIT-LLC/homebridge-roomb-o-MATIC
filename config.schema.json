@@ -1,340 +1,112 @@
 {
-  "pluginAlias": "Roomba",
+  "pluginAlias": "Roomb-O-Matic",
   "pluginType": "platform",
-  "customUi": true,
   "singular": true,
-  "customUiPath": "./dist/homebridge-ui",
-  "headerDisplay": "For more information and help please consult the [README](https://github.com/homebridge-plugins/homebridge-roomba#setup).",
+  "customUi": true,
+  "headerDisplay": "Roomb-O-Matic connects to your Roomba on the local network. Close the iRobot app before capturing a password or starting Homebridge.",
+  "footerDisplay": "Cloud login stays off when devices are saved here. Gigya HTTP 403 does not remove accessories Homebridge has already cached.",
   "schema": {
     "type": "object",
     "properties": {
       "name": {
-        "type": "string",
         "title": "Name",
-        "default": "Roomba"
-      },
-      "email": {
         "type": "string",
-        "title": "iRobot Account Email",
-        "description": "The email address you use to log into the iRobot Home app.",
-        "pattern": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$",
-        "x-schema-form": {
-          "type": "email"
-        }
-      },
-      "password": {
-        "type": "string",
-        "title": "iRobot Account Password",
-        "description": "The password you use to log into the iRobot Home app.",
-        "x-schema-form": {
-          "type": "password"
-        }
+        "default": "Roomb-O-Matic",
+        "required": true
       },
       "disableDiscovery": {
+        "title": "Skip iRobot cloud login",
         "type": "boolean",
-        "title": "Disable Discovery",
-        "description": "Disable automatic discovery of Roomba devices. If you have multiple Roomba devices, you can disable discovery and manually configure each device."
+        "default": true,
+        "description": "Use the local devices list. Leave this on so startup does not depend on the iRobot cloud."
+      },
+      "enableMatter": {
+        "title": "Matter robotic vacuum",
+        "type": "string",
+        "enum": ["auto", "on", "off"],
+        "default": "auto",
+        "description": "auto publishes a Matter vacuum when Homebridge Matter is available and keeps the HomeKit Fan either way. off leaves Matter unpublished."
+      },
+      "email": {
+        "title": "iRobot account email",
+        "type": "string",
+        "description": "Used only when no local devices are configured and cloud login is not skipped."
+      },
+      "password": {
+        "title": "iRobot account password",
+        "type": "string",
+        "description": "Used only for cloud discovery. Local devices do not send this."
       },
       "devices": {
+        "title": "Robots",
         "type": "array",
         "items": {
-          "title": "Devices",
           "type": "object",
           "properties": {
             "name": {
+              "title": "Name",
               "type": "string",
-              "title": "Robot Vacuum Name"
-            },
-            "model": {
-              "type": "string",
-              "title": "Robot Vacuum Model"
-            },
-            "serialnum": {
-              "type": "string",
-              "title": "Robot Vacuum Serial Number"
+              "required": true
             },
             "blid": {
+              "title": "BLID",
               "type": "string",
-              "title": "Robot Vacuum BLID"
+              "required": true
             },
             "robotpwd": {
+              "title": "Robot password",
               "type": "string",
-              "title": "Robot Vacuum Password"
+              "required": true
             },
             "ipaddress": {
+              "title": "IP address",
               "type": "string",
-              "title": "Robot Vacuum IP Address"
+              "required": true,
+              "format": "ipv4"
             },
-            "dockContactSensor": {
-              "type": "boolean",
-              "title": "Enable Dock Contact Sensor",
-              "default": true
-            },
-            "runningContactSensor": {
-              "type": "boolean",
-              "title": "Enable Running Contact Sensor"
-            },
-            "binContactSensor": {
-              "type": "boolean",
-              "title": "Enable Bin Full Contact Sensor"
-            },
-            "dockingContactSensor": {
-              "type": "boolean",
-              "title": "Returning Home Contact Sensor"
-            },
-            "tankContactSensor": {
-              "type": "boolean",
-              "title": "Braava Water Tank Contact Sensor"
-            },
-            "homeSwitch": {
-              "type": "boolean",
-              "title": "Home Switch"
-            },
-            "cleanBehaviour": {
+            "pmapId": {
+              "title": "Persistent map id",
               "type": "string",
-              "title": "When Roomba is turned on",
-              "default": "everywhere",
-              "oneOf": [
-                {
-                  "title": "Clean everywhere",
-                  "enum": [
-                    "everywhere"
-                  ]
-                },
-                {
-                  "title": "Clean specific rooms",
-                  "enum": [
-                    "rooms"
-                  ]
-                }
-              ]
+              "description": "pmap_id from the list-rooms helper."
             },
-            "mission": {
-              "type": "object",
-              "title": "Mission Info",
-              "properties": {
-                "ordered": {
-                  "type": "number",
-                  "title": "Clean rooms in order",
-                  "default": 1,
-                  "oneOf": [
-                    {
-                      "title": "Yes",
-                      "enum": [
-                        1
-                      ]
-                    },
-                    {
-                      "title": "No",
-                      "enum": [
-                        0
-                      ]
-                    }
-                  ],
-                  "condition": {
-                    "functionBody": "return (model.devices && model.devices[arrayIndices].cleanBehaviour === 'rooms');"
-                  }
-                },
-                "pmap_id": {
-                  "type": "string",
-                  "title": "Pmap Id",
-                  "condition": {
-                    "functionBody": "return (model.devices && model.devices[arrayIndices].cleanBehaviour === 'rooms');"
-                  }
-                },
-                "regions": {
-                  "type": "array",
-                  "title": "Rooms to be cleaned",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "region_id": {
-                        "type": "string",
-                        "title": "Region Id"
-                      },
-                      "type": {
-                        "type": "string",
-                        "title": "Type",
-                        "default": "rid"
-                      },
-                      "params": {
-                        "type": "object",
-                        "properties": {
-                          "noAutoPasses": {
-                            "type": "boolean",
-                            "default": false,
-                            "title": "Specify Number of Cleaning Passes"
-                          },
-                          "twoPass": {
-                            "type": "boolean",
-                            "default": false,
-                            "title": "Two Passes"
-                          }
-                        }
-                      }
-                    }
+            "userPmapvId": {
+              "title": "User map version",
+              "type": "string",
+              "description": "user_pmapv_id from the list-rooms helper."
+            },
+            "cleanMode": {
+              "title": "Clean mode",
+              "type": "string",
+              "enum": ["automatic", "deep", "quick"],
+              "default": "automatic",
+              "description": "Automatic lets the robot decide. Deep Clean is two passes. Quick is one pass."
+            },
+            "rooms": {
+              "title": "Rooms",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "title": "Region id",
+                    "type": "string",
+                    "required": true
                   },
-                  "condition": {
-                    "functionBody": "return (model.devices && model.devices[arrayIndices].cleanBehaviour === 'rooms');"
-                  }
-                },
-                "user_pmapv_id": {
-                  "type": "string",
-                  "title": "User Pmapv Id",
-                  "condition": {
-                    "functionBody": "return (model.devices && model.devices[arrayIndices].cleanBehaviour === 'rooms');"
+                  "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "required": true
+                  },
+                  "selected": {
+                    "title": "Clean this room when the vacuum starts",
+                    "type": "boolean"
                   }
                 }
               }
-            },
-            "stopBehaviour": {
-              "type": "string",
-              "title": "When Roomba is turned off",
-              "default": "home",
-              "oneOf": [
-                {
-                  "title": "Home",
-                  "enum": [
-                    "home"
-                  ]
-                },
-                {
-                  "title": "Pause",
-                  "enum": [
-                    "pause"
-                  ]
-                }
-              ]
-            },
-            "idleWatchInterval": {
-              "type": "integer",
-              "title": "Idle Poll Interval (minutes)",
-              "description": "How often to poll Roomba's status when it is idle. Defaults to 15 minutes."
-            },
-            "externalAccessory": {
-              "type": "boolean",
-              "title": "Publish as External Accessory",
-              "description": "Publish this Roomba as an external accessory (independent HomeKit bridge) rather than part of the main Homebridge bridge. Overrides the global setting for this device."
             }
-          },
-          "required": [
-            "name",
-            "model",
-            "blid",
-            "robotpwd",
-            "ipaddress",
-            "cleanBehaviour",
-            "stopBehaviour"
-          ]
+          }
         }
-      },
-      "idleWatchInterval": {
-        "type": "integer",
-        "title": "Idle Poll Interval (minutes)",
-        "description": "How often to poll Roomba's status when it is idle. Defaults to 15 minutes."
-      },
-      "externalAccessory": {
-        "type": "boolean",
-        "title": "Publish as External Accessory",
-        "description": "Publish all Roomba devices as external accessories (independent HomeKit bridges) rather than part of the main Homebridge bridge. Can be overridden per device."
-      },
-      "debug": {
-        "type": "boolean",
-        "title": "Debug logging"
-      },
-      "enableMatter": {
-        "type": "boolean",
-        "title": "Enable Matter Support",
-        "description": "Enable Homebridge Matter support when running on Homebridge v2 with Matter enabled. If Matter is unavailable or fails to initialize, the plugin automatically falls back to HAP (HomeKit Accessory Protocol). Defaults to enabled."
       }
-    },
-    "required": [
-      "name"
-    ]
-  },
-  "layout": [
-    {
-      "type": "fieldset",
-      "title": "iRobot Account",
-      "expandable": true,
-      "expanded": false,
-      "items": [
-        "email",
-        "password"
-      ]
-    },
-    {
-      "type": "fieldset",
-      "title": "Roomba Device Settings",
-      "expandable": true,
-      "expanded": false,
-      "items": [
-        {
-          "type": "help",
-          "helpvalue": "<em class='primary-text'>With Roomba Device Setting, you can set device specific settings based on <b style='color: var(--secondary-color);'>blid</b>.</em>"
-        },
-        {
-          "key": "devices",
-          "notitle": false,
-          "type": "tabarray",
-          "title": "{{ value.name || value.ipaddress || value.serialnum || 'New Vacuum' }}",
-          "expandable": true,
-          "expanded": false,
-          "orderable": false,
-          "items": [
-            "devices[].name",
-            "devices[].model",
-            "devices[].serialnum",
-            "devices[].blid",
-            "devices[].robotpwd",
-            "devices[].ipaddress",
-            "devices[].homeSwitch",
-            "devices[].dockContactSensor",
-            "devices[].dockingContactSensor",
-            "devices[].runningContactSensor",
-            "devices[].binContactSensor",
-            "devices[].tankContactSensor",
-            "devices[].idleWatchInterval",
-            "devices[].cleanBehaviour",
-            {
-              "key": "devices[].externalAccessory",
-              "description": "Publish this device as an external accessory (independent HomeKit bridge)."
-            },
-            {
-              "key": "devices[].mission",
-              "type": "fieldset",
-              "title": "Mission Settings",
-              "expandable": true,
-              "expanded": false,
-              "items": [
-                "devices[].mission.pmap_id",
-                "devices[].mission.user_pmapv_id",
-                "devices[].mission.regions",
-                "devices[].mission.regions[].region_id",
-                "devices[].mission.regions[].type",
-                "devices[].mission.regions[].params.noAutoPasses",
-                "devices[].mission.regions[].params.twoPass",
-                "devices[].mission.ordered"
-              ]
-            },
-            "devices[].stopBehaviour",
-            "devices[].idleWatchInterval"
-          ]
-        }
-      ]
-    },
-    {
-      "type": "fieldset",
-      "title": "Advanced Settings",
-      "expandable": true,
-      "expanded": false,
-      "items": [
-        "idleWatchInterval",
-        "disableDiscovery",
-        "externalAccessory",
-        "debug",
-        "enableMatter"
-      ]
     }
-  ]
+  }
 }

@@ -1,46 +1,28 @@
 declare module 'dorita980' {
-  export interface RobotMission {
-    cycle?: string
-    phase?: string
-    [key: string]: any
+  export interface LocalRobot {
+    start: () => Promise<unknown>
+    stop: () => Promise<unknown>
+    dock: () => Promise<unknown>
+    pause?: () => Promise<unknown>
+    resume?: () => Promise<unknown>
+    cleanRoom?: (args: object) => Promise<unknown>
+    getRobotState?: (fields: string[]) => Promise<Record<string, unknown>>
+    getStatus?: () => Promise<Record<string, unknown>>
+    setCleaningPassesAuto?: () => Promise<unknown>
+    setCleaningPassesOne?: () => Promise<unknown>
+    setCleaningPassesTwo?: () => Promise<unknown>
+    end?: (force?: boolean) => void
+    on?: (event: string, listener: (...args: unknown[]) => void) => void
   }
 
-  export interface RobotState {
-    cleanMissionStatus?: RobotMission
-    batPct?: number
-    bin?: {
-      full?: boolean
-      [key: string]: any
-    }
-    tankLvl?: number
-    lastCommand?: {
-      regions?: Array<{
-        regionId: number
-        regionType: string
-      }>
-      [key: string]: any
-    }
-    [key: string]: any
-  }
-
-  export interface Roomba {
-    on: (event: string, listener: (...args: any[]) => void) => this
-    removeAllListeners: (event?: string | symbol) => this
-    end: () => void
-    getRobotState: (waitForFields?: string[]) => Promise<RobotState>
-    getMission: (waitForFields?: string[]) => Promise<{ cleanMissionStatus?: RobotMission }>
-    start: () => Promise<{ ok: null }>
-    clean: () => Promise<{ ok: null }>
-    cleanRoom: (arg?: any) => Promise<{ ok: null }> | this
-    pause: () => Promise<{ ok: null }>
-    stop: () => Promise<{ ok: null }>
-    resume: () => Promise<{ ok: null }>
-    dock: () => Promise<{ ok: null }>
-    [key: string]: any
-  }
-
-  interface Dorita980Module {
-    Local: new (username: string, password: string, ip: string, version?: 2 | 3, options?: object | number) => Roomba
+  export interface Dorita980Module {
+    Local: new (
+      username: string,
+      password: string,
+      ip: string,
+      version?: number,
+      options?: Record<string, unknown>,
+    ) => LocalRobot
   }
 
   const dorita980: Dorita980Module
