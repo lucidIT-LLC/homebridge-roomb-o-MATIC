@@ -1,5 +1,9 @@
 const SECRET_KEYS = new Set(['blid', 'password', 'passwd', 'robotpwd'])
 
+/**
+ * Strip trailing NUL bytes and surrounding whitespace.
+ * A leading `:1:` is part of the local password and must stay.
+ */
 export function cleanCredential(value: string): string {
   let current = value
   let previous = ''

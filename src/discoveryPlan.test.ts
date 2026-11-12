@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { backoffDelayMs, planDeviceDiscovery, sanitizeDevice } from './discoveryPlan.js'
+import { cleanCredential } from './redact.js'
 import type { DeviceConfig } from './settings.js'
 
 const local: DeviceConfig = {
@@ -13,6 +14,18 @@ const local: DeviceConfig = {
 describe('discovery planning', () => {
   it('strips trailing NULs from stored credentials', () => {
     expect(sanitizeDevice(local)).toMatchObject({ blid: 'blid', robotpwd: 'secret' })
+  })
+
+  it('keeps a leading :1: password prefix', () => {
+    const password = ':1:example-local-secret-pad000'
+    const stored = `${password}\0 \n`
+    expect(cleanCredential(stored)).toBe(password)
+    expect(sanitizeDevice({
+      name: 'Roomba',
+      blid: 'blid\0',
+      robotpwd: stored,
+      ipaddress: '192.0.2.10',
+    })).toMatchObject({ blid: 'blid', robotpwd: password })
   })
 
   it('skips cloud login when local devices are configured', async () => {

@@ -16,11 +16,15 @@ export interface ModeOption {
 /**
  * Matter ModeBase requires 2–255 supported modes. One mode fails accessory
  * registration on Homebridge 2.5 / Matter.js 0.18.
+ *
+ * Matter 1.6 RvcCleanMode tags: Auto 0, Quick 1, DeepClean 16384, Vacuum 16385.
+ * Apple Home hides a vacuum intensity that does not also carry Vacuum.
+ * Deep Clean is a second vacuum pass, so these modes do not carry a Mop tag.
  */
 export const RVC_CLEAN_MODES: ModeOption[] = [
   { label: 'Automatic', mode: CLEAN_MODE_AUTOMATIC, modeTags: [{ value: 0 }, { value: 16385 }] },
-  { label: 'Deep Clean', mode: CLEAN_MODE_DEEP, modeTags: [{ value: 16384 }] },
-  { label: 'Quick', mode: CLEAN_MODE_QUICK, modeTags: [{ value: 1 }] },
+  { label: 'Deep Clean', mode: CLEAN_MODE_DEEP, modeTags: [{ value: 16384 }, { value: 16385 }] },
+  { label: 'Quick', mode: CLEAN_MODE_QUICK, modeTags: [{ value: 1 }, { value: 16385 }] },
 ]
 
 export const RVC_RUN_MODES: ModeOption[] = [

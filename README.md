@@ -6,13 +6,11 @@ The published npm package `homebridge-roomb-o-matic@1.2.1` did not include TypeS
 
 ## Install
 
-This release is not published to npm. Install it from GitHub:
-
 ```bash
-npm install -g lucidIT-LLC/homebridge-roomb-o-MATIC#cursor/roomb-o-matic-1.3-74d4
+npm install -g homebridge-roomb-o-matic@1.3.1
 ```
 
-Homebridge 1.9 through 2.x is supported, including 2.5. Node.js 20, 22, or 24.
+The npm package name is `homebridge-roomb-o-matic` (unscoped). 1.3.1 is the first release published since 1.2.1. Homebridge 1.9 through 2.x is supported, including 2.5. Node.js 20, 22, or 24.
 
 ## Configure
 
@@ -53,6 +51,8 @@ Close the iRobot app first. The robot accepts one local connection at a time.
 On an i-series robot such as the i5+, press and hold the **Home** button (the dock / house icon) for about two seconds, until it plays tones. Do not hold both buttons; that gesture is for 900-series robots.
 
 The plugin then connects to port 8883 and reads the password. It retries while it waits for the button. Trailing NUL bytes are removed, because leaving one on the password makes MQTT report "Bad username or password".
+
+The stored password keeps a leading `:1:` when the robot sends one. On a typical 38-byte reply that prefix starts at offset 7 and the password is 30 characters. Slicing later stores a shorter secret, and the robot answers with the same MQTT error. Capture the password again if a robot saved by an older build fails local login that way.
 
 In Config UI, open Roomb-O-Matic, enter the robot IP, and choose **Capture password**. The page does not print the password or BLID in the status line. Saving the form writes them into `devices` and turns cloud login off.
 
@@ -95,6 +95,8 @@ Matter advertises three RvcCleanMode values. One mode is not enough: Homebridge 
 | Automatic | Robot default (`noAutoPasses: false`, `twoPass: false`) |
 | Deep Clean | Two passes (`noAutoPasses: true`, `twoPass: true`) |
 | Quick | One pass (`noAutoPasses: true`, `twoPass: false`) |
+
+Apple Home only lists a vacuum intensity when the mode also has the Vacuum tag (`16385`). Automatic is tagged Auto (`0`) and Vacuum. Deep Clean is tagged DeepClean (`16384`) and Vacuum. Quick is tagged Quick (`1`) and Vacuum. Deep Clean is a second vacuum pass. These robots do not mop, so the modes do not carry a Mop tag.
 
 The HomeKit Fan still starts and stops a clean. Its clean mode and selected rooms come from the device config until a Matter controller changes them.
 
