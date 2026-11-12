@@ -1,12 +1,6 @@
 {
-  "watch": [
-    "src"
-  ],
-  "ext": "ts",
-  "ignore": [],
-  "exec": "tsc && npm run plugin-ui && homebridge run -U ./test/hbConfig -D",
-  "signal": "SIGTERM",
-  "env": {
-    "NODE_OPTIONS": "--trace-warnings"
-  }
+  "watch": ["src"],
+  "ext": "ts,json",
+  "ignore": ["src/**/*.test.ts"],
+  "exec": "npm run build"
 }

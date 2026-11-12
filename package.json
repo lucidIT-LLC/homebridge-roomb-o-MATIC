@@ -1,72 +1,74 @@
 {
-  "name": "@homebridge-plugins/homebridge-roomba",
-  "displayName": "Roomba",
-  "type": "module",
-  "version": "3.0.4",
-  "description": "homebridge-plugin for Roomba devices",
-  "author": {
-    "name": "RayanKhan"
-  },
+  "name": "homebridge-roomb-o-matic",
+  "displayName": "Roomb-O-Matic",
+  "version": "1.3.0",
+  "description": "Roomba Homebridge plugin reimagined with O‑Matic Factory magic. True vacuum semantics, hybrid local + advanced support, brand-driven.",
+  "author": "James Walker (O‑Matic Factory)",
   "license": "MIT",
-  "homepage": "https://github.com/homebridge-plugins/homebridge-roomba#readme",
+  "homepage": "https://github.com/lucidIT-LLC/homebridge-roomb-o-MATIC#readme",
   "repository": {
     "type": "git",
-    "url": "git://github.com/homebridge-plugins/homebridge-roomba.git"
+    "url": "git+https://github.com/lucidIT-LLC/homebridge-roomb-o-MATIC.git"
   },
   "bugs": {
-    "url": "https://github.com/homebridge-plugins/homebridge-roomba/issues"
+    "url": "https://github.com/lucidIT-LLC/homebridge-roomb-o-MATIC/issues"
   },
   "keywords": [
     "homebridge-plugin",
-    "supports-matter",
-    "supports-hap",
+    "homebridge",
     "iRobot",
-    "Roomba"
+    "Roomba",
+    "Vacuum",
+    "O‑Matic",
+    "roomb-o-matic",
+    "hybrid",
+    "local",
+    "supports-matter",
+    "supports-hap"
   ],
   "main": "./dist/index.js",
+  "type": "module",
   "engines": {
-    "homebridge": "^1.11.4 || ^2.0.0",
-    "node": "^22.12.0 || ^24.0.0 || ^26.0.0"
+    "homebridge": "^1.9.0 || ^2.0.0",
+    "node": "^20 || ^22 || ^24"
   },
-  "maintainers": [
-    {
-      "name": "karlvr"
-    }
-  ],
+  "config.schema": "./config.schema.json",
+  "bin": {
+    "roomb-o-matic-getpassword": "./dist/cli/get-password.js",
+    "roomb-o-matic-list-rooms": "./dist/cli/list-rooms.js"
+  },
   "scripts": {
-    "lint": "eslint . --max-warnings=0",
-    "lint:fix": "npm run lint -- --fix",
-    "watch": "npm run build && npm link && nodemon",
-    "plugin-ui": "rsync ./src/homebridge-ui/public/index.html ./dist/homebridge-ui/public/",
-    "build": "rimraf ./dist && tsc && npm run plugin-ui",
+    "lint": "eslint src --max-warnings=0",
+    "lint:fix": "eslint src --fix",
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc",
+    "watch": "npm run build && nodemon",
+    "prepare": "npm run build",
     "prepublishOnly": "npm run lint && npm run build",
     "test": "vitest run",
     "test:watch": "vitest watch",
     "test-coverage": "npm run test -- --coverage",
-    "roomba:getpassword": "get-roomba-password",
-    "roomba:getlastcommand": "node ./dist/lastcommand.js",
-    "docs": "typedoc",
-    "docs:lint": "typedoc --emit none --treatWarningsAsErrors",
-    "changelog:sync": "node .github/scripts/sync-changelog.mjs"
+    "roomba:getpassword": "node ./dist/cli/get-password.js",
+    "roomba:listrooms": "node ./dist/cli/list-rooms.js"
+  },
+  "dependencies": {
+    "@homebridge/plugin-ui-utils": "^2.0.1",
+    "dorita980": "^4.0.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.6",
+    "@types/qrcode": "^1.5.6",
+    "@vitest/coverage-v8": "^3.0.7",
+    "eslint": "^9.21.0",
+    "homebridge": "^2.5.0",
+    "nodemon": "^3.1.9",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.26.0",
+    "vitest": "^3.0.7"
   },
   "publishConfig": {
     "access": "public"
-  },
-  "dependencies": {
-    "@homebridge/plugin-ui-utils": "^2.2.5",
-    "dorita980": "^4.0.0"
-  },
-  "devDependencies": {
-    "@antfu/eslint-config": "^9.2.0",
-    "@types/node": "^26.1.2",
-    "@vitest/coverage-v8": "^4.1.10",
-    "homebridge": "^2.2.1",
-    "nodemon": "^3.1.14",
-    "rimraf": "^6.1.3",
-    "ts-node": "^10.9.2",
-    "typedoc": "^0.28.20",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.10"
   },
   "overrides": {
     "request": {

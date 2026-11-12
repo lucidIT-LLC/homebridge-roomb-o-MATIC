@@ -1,40 +1,25 @@
-import type { API, PlatformConfig } from 'homebridge'
+import type { API } from 'homebridge'
 
-import RoombaPlatform from './Platform.HAP.js'
-import RoombaMatterPlatform from './Platform.Matter.js'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { RoombOMaticPlatform } from './platform.js'
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js'
 
-/**
- * Creates a proxy constructor that instantiates the correct platform
- * implementation — Matter or HAP — depending on runtime availability
- * and the user's configuration.
- *
- * - If `enableMatter` is `false` in the config, HAP is always used.
- * - If Matter is available and enabled on the Homebridge host, the Matter
- *   platform is used; otherwise the HAP platform is used.
- * - If Matter platform initialization throws, HAP is used as a fallback.
- */
-export function createPlatformProxy(HAPPlatform: any, MatterPlatform: any): any {
-  return class RoombaPlatformProxy {
-    constructor(log: any, config: PlatformConfig, api: any) {
-      const enableMatter = config.enableMatter !== false
-      const matterAvailable = !!(api?.isMatterAvailable?.() && api?.isMatterEnabled?.())
-
-      if (enableMatter && matterAvailable) {
-        try {
-          return new MatterPlatform(log, config, api)
-        } catch (error: any) {
-          log.warn(`Matter platform failed to initialize, falling back to HAP: ${error?.message ?? error}`)
-        }
-      }
-
-      return new HAPPlatform(log, config, api)
-    }
+function pluginVersion(): string {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url))
+    const raw = readFileSync(join(here, '..', 'package.json'), 'utf8')
+    const parsed = JSON.parse(raw) as { version?: string }
+    return parsed.version ?? 'unknown'
+  }
+  catch {
+    return 'unknown'
   }
 }
 
-// Register our platform with homebridge.
-export default (api: API): void => {
-  const ProxyCtor = createPlatformProxy(RoombaPlatform, RoombaMatterPlatform)
-  api.registerPlatform(PLUGIN_NAME, PLATFORM_NAME, ProxyCtor as any)
+export default function (api: API): void {
+  console.log(`[${PLUGIN_NAME}] Loaded — Version ${pluginVersion()}`)
+  api.registerPlatform(PLUGIN_NAME, PLATFORM_NAME, RoombOMaticPlatform)
 }
