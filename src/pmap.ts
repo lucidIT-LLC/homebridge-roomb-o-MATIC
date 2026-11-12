@@ -1,3 +1,5 @@
+import { withTimeout } from './timeout.js'
+
 export interface MapRegion {
   id: string
   name?: string
@@ -85,11 +87,10 @@ export async function readRobotMaps(robot: {
   if (!robot.getRobotState) {
     throw new Error('This robot does not expose map state.')
   }
-  const state = await Promise.race([
+  const state = await withTimeout(
     robot.getRobotState(['pmaps', 'lastCommand']),
-    new Promise<never>((_resolve, reject) => {
-      setTimeout(() => reject(new Error('Timed out waiting for map data. Close the iRobot app and try again.')), timeoutMs)
-    }),
-  ])
+    timeoutMs,
+    'Timed out waiting for map data. Close the iRobot app and try again.',
+  )
   return listMapsFromState(state)
 }

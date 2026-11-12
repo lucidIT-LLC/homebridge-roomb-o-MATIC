@@ -131,6 +131,10 @@ export class RoombOMaticPlatform {
       seen.add(uuid)
       this.publishDevice(device)
     }
+    if (plan.authoritative) {
+      this.unregisterMissing(seen)
+      return
+    }
     for (const [uuid, accessory] of this.accessories) {
       if (!seen.has(uuid)) {
         this.reviveOne(accessory)
@@ -171,6 +175,23 @@ export class RoombOMaticPlatform {
     this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory])
   }
 
+  private unregisterMissing(seen: Set<string>): void {
+    const stale: PlatformAccessory[] = []
+    for (const [uuid, accessory] of this.accessories) {
+      if (seen.has(uuid)) {
+        continue
+      }
+      this.sessions.get(uuid)?.dispose()
+      this.sessions.delete(uuid)
+      this.accessories.delete(uuid)
+      stale.push(accessory)
+    }
+    if (stale.length > 0) {
+      this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, stale)
+      this.log.info(`Removed ${stale.length} accessory(ies) that are no longer configured.`)
+    }
+  }
+
   private reviveCached(): void {
     for (const accessory of this.accessories.values()) {
       this.reviveOne(accessory)
@@ -194,11 +215,19 @@ export class RoombOMaticPlatform {
     if (!session) {
       session = new RoombaAccessory(this.log, this.api, accessory, device, {
         robotFactory: this.deps.robotFactory,
-        matter: this.matterApi(),
+        matter: this.sessionMatter(),
       })
       this.sessions.set(accessory.UUID, session)
     }
     void this.publishMatter(session, device)
+  }
+
+  private sessionMatter(): MatterApi | undefined {
+    const matter = this.matterApi()
+    if (!matterPreferenceEnabled(this.config.enableMatter, Boolean(matter))) {
+      return undefined
+    }
+    return matter
   }
 
   private matterApi(): MatterApi | undefined {

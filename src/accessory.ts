@@ -14,6 +14,7 @@ import {
 } from './mission.js'
 import { buildMatterDefinition, phaseIsCleaning, phaseToOperational } from './matterVacuum.js'
 import { publicSerial, safeError } from './redact.js'
+import { withTimeout } from './timeout.js'
 import { sanitizeDevice } from './discoveryPlan.js'
 import type { CleanMode, DeviceConfig } from './settings.js'
 
@@ -99,6 +100,7 @@ export class RoombaAccessory {
   }
 
   private matter?: MatterBridge
+  private pollInFlight = false
 
   private service(type: any, name: string, subtype: string): Service {
     return this.accessory.getServiceById(type, subtype) ?? this.accessory.addService(type, name, subtype)
@@ -117,6 +119,7 @@ export class RoombaAccessory {
     }
     catch (error) {
       this.log.error(`${this.device.name}: Vacuum command failed — ${safeError(error, [this.device.robotpwd, this.device.blid])}`)
+      throw error
     }
   }
 
@@ -129,6 +132,7 @@ export class RoombaAccessory {
     }
     catch (error) {
       this.log.error(`${this.device.name}: Dock command failed — ${safeError(error, [this.device.robotpwd, this.device.blid])}`)
+      throw error
     }
   }
 
@@ -152,15 +156,23 @@ export class RoombaAccessory {
   }
 
   async fetchHybridState(): Promise<void> {
-    if (!this.robot.getRobotState) {
+    if (!this.robot.getRobotState || this.pollInFlight) {
       return
     }
+    this.pollInFlight = true
     try {
-      const state = await this.robot.getRobotState(['batPct', 'bin', 'cleanMissionStatus'])
+      // Wait only for fields every local robot publishes. `bin` is optional;
+      // dorita980 blocks forever when a requested field never arrives.
+      const state = await withTimeout(
+        this.robot.getRobotState(['batPct', 'cleanMissionStatus']),
+        15_000,
+        'Timed out waiting for robot state',
+      )
       const battery = numberOrZero(state.batPct)
       const mission = state.cleanMissionStatus as { phase?: string } | undefined
       const phase = mission?.phase
-      const charging = phase === 'charge'
+      const docked = phase === 'charge'
+      const charging = docked && battery < 100
       const bin = state.bin as { full?: boolean } | undefined
       const binFull = Boolean(bin?.full ?? false)
       this.updateCharacteristics(battery, charging, binFull)
@@ -169,6 +181,9 @@ export class RoombaAccessory {
     }
     catch (error) {
       this.log.error(`${this.device.name}: Hybrid state fetch failed — ${safeError(error, [this.device.robotpwd, this.device.blid])}`)
+    }
+    finally {
+      this.pollInFlight = false
     }
   }
 
@@ -179,10 +194,11 @@ export class RoombaAccessory {
     try {
       const state = await this.robot.getStatus()
       const battery = numberOrZero(state.battery)
-      const charging = Boolean(state.charging)
+      const reportedCharging = Boolean(state.charging)
+      const charging = reportedCharging && battery < 100
       const binFull = Boolean(state.binFull ?? false)
       this.updateCharacteristics(battery, charging, binFull)
-      await this.pushMatter(battery, charging, charging ? 'charge' : undefined)
+      await this.pushMatter(battery, charging, reportedCharging ? 'charge' : undefined)
     }
     catch (error) {
       this.log.error(`${this.device.name}: Legacy state fetch failed — ${safeError(error, [this.device.robotpwd, this.device.blid])}`)
@@ -197,6 +213,13 @@ export class RoombaAccessory {
         ? this.api.hap.Characteristic.ChargingState.CHARGING
         : this.api.hap.Characteristic.ChargingState.NOT_CHARGING,
     )
+    const lowBattery = this.api.hap.Characteristic.StatusLowBattery
+    if (lowBattery) {
+      this.batteryService.setCharacteristic(
+        lowBattery,
+        battery <= 20 ? lowBattery.BATTERY_LEVEL_LOW : lowBattery.BATTERY_LEVEL_NORMAL,
+      )
+    }
     this.binSensorService.setCharacteristic(
       this.api.hap.Characteristic.ContactSensorState,
       binFull

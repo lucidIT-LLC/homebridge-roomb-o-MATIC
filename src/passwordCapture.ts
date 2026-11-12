@@ -171,6 +171,57 @@ interface LookupSocket {
   bind: (port: number, callback?: () => void) => void
   send: (message: Buffer, offset: number, length: number, port: number, address: string) => void
   close: () => void
+  setBroadcast?: (flag: boolean) => void
+}
+
+export async function discoverLocalRobots(options?: {
+  timeoutMs?: number
+  createSocket?: () => LookupSocket
+}): Promise<Array<{ blid: string, ip: string }>> {
+  const timeoutMs = options?.timeoutMs ?? 4_000
+  const factory = options?.createSocket ?? (() => createSocket('udp4') as DgramSocket)
+  return await new Promise((resolve) => {
+    const found = new Map<string, string>()
+    let settled = false
+    const socket = factory()
+    const finish = () => {
+      if (settled) {
+        return
+      }
+      settled = true
+      clearTimeout(timer)
+      try {
+        socket.close()
+      }
+      catch {
+        // Already closed.
+      }
+      resolve([...found].map(([blid, ip]) => ({ blid, ip })))
+    }
+    const timer = setTimeout(finish, timeoutMs)
+    socket.on('error', () => finish())
+    socket.on('message', (message: Buffer) => {
+      const parsed = parseRobotAnnouncement(message)
+      if (parsed?.blid && parsed.ip) {
+        found.set(stripSecret(parsed.blid), parsed.ip)
+      }
+    })
+    try {
+      socket.bind(0, () => {
+        try {
+          socket.setBroadcast?.(true)
+        }
+        catch {
+          // A test socket may not implement broadcast.
+        }
+        const message = Buffer.from('irobotmcs')
+        socket.send(message, 0, message.length, 5678, '255.255.255.255')
+      })
+    }
+    catch {
+      finish()
+    }
+  })
 }
 
 export async function lookupBlid(ip: string, options?: {

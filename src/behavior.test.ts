@@ -11,6 +11,7 @@ const On = { name: 'On' }
 const BatteryLevel = { name: 'BatteryLevel' }
 const ChargingState = { name: 'ChargingState', CHARGING: 1, NOT_CHARGING: 0 }
 const ContactSensorState = { name: 'Contact', CONTACT_DETECTED: 0, CONTACT_NOT_DETECTED: 1 }
+const StatusLowBattery = { name: 'StatusLowBattery', BATTERY_LEVEL_LOW: 1, BATTERY_LEVEL_NORMAL: 0 }
 
 class FakeService {
   readonly characteristics = new Map<unknown, { value?: unknown, setHandler?: (value: unknown) => unknown, onSet: (cb: (value: unknown) => unknown) => unknown }>()
@@ -51,7 +52,7 @@ function fakeApi(): API {
       Battery: FakeService,
       ContactSensor: FakeService,
     },
-    Characteristic: { On, BatteryLevel, ChargingState, ContactSensorState },
+    Characteristic: { On, BatteryLevel, ChargingState, ContactSensorState, StatusLowBattery },
   }
   return { hap } as unknown as API
 }
@@ -136,11 +137,12 @@ describe('v1.2.1 behavior', () => {
     expect(robot.dock).toHaveBeenCalledOnce()
 
     await session.fetchHybridState()
-    expect(robot.getRobotState).toHaveBeenCalledWith(['batPct', 'bin', 'cleanMissionStatus'])
+    expect(robot.getRobotState).toHaveBeenCalledWith(['batPct', 'cleanMissionStatus'])
     const battery = services.find(service => service.subtype === 'battery')!
     const bin = services.find(service => service.subtype === 'bin')!
     expect(battery.getCharacteristic(BatteryLevel).value).toBe(42)
     expect(battery.getCharacteristic(ChargingState).value).toBe(ChargingState.CHARGING)
+    expect(battery.getCharacteristic(StatusLowBattery).value).toBe(StatusLowBattery.BATTERY_LEVEL_NORMAL)
     expect(bin.getCharacteristic(ContactSensorState).value).toBe(ContactSensorState.CONTACT_NOT_DETECTED)
     session.dispose()
   })
@@ -173,6 +175,37 @@ describe('v1.2.1 behavior', () => {
       noAutoPasses: true,
     })
     expect(robot.start).not.toHaveBeenCalled()
+    session.dispose()
+  })
+
+  it('reports a full robot on the charge phase as docked, not charging', async () => {
+    const robot = {
+      start: vi.fn(async () => ({ ok: null })),
+      stop: vi.fn(async () => ({ ok: null })),
+      dock: vi.fn(async () => ({ ok: null })),
+      getRobotState: vi.fn(async () => ({ batPct: 100, cleanMissionStatus: { phase: 'charge' } })),
+      end: vi.fn(),
+    }
+    const accessory = fakeAccessory()
+    const session = new RoombaAccessory(logger(), fakeApi(), accessory, device, { robotFactory: () => robot })
+    const battery = (accessory as unknown as { services: FakeService[] }).services.find(service => service.subtype === 'battery')!
+    await vi.waitFor(() => {
+      expect(battery.getCharacteristic(ChargingState).value).toBe(ChargingState.NOT_CHARGING)
+    })
+    session.dispose()
+  })
+
+  it('rejects the HomeKit write when the robot command fails', async () => {
+    const robot = {
+      start: vi.fn(async () => {
+        throw new Error('unreachable')
+      }),
+      stop: vi.fn(async () => ({ ok: null })),
+      dock: vi.fn(async () => ({ ok: null })),
+      end: vi.fn(),
+    }
+    const session = new RoombaAccessory(logger(), fakeApi(), fakeAccessory(), device, { robotFactory: () => robot })
+    await expect(session.handleActiveSet(true)).rejects.toThrow('unreachable')
     session.dispose()
   })
 

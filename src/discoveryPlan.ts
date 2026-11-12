@@ -1,6 +1,7 @@
 import type { CloudDiscoveryResult } from './cloudDiscovery.js'
 import type { DeviceConfig, RoombOMaticConfig } from './settings.js'
 
+import { discoverLocalRobots } from './passwordCapture.js'
 import { cleanCredential } from './redact.js'
 
 export interface DiscoveryPlan {
@@ -8,10 +9,11 @@ export interface DiscoveryPlan {
   devices: DeviceConfig[]
   retry: boolean
   /**
-   * Always empty. A failed or empty cloud discovery must not unregister
-   * accessories Homebridge already cached.
+   * True when this result is the user's current robot list. Cached accessories
+   * that are not in `devices` should be removed. A failed or empty cloud
+   * discovery leaves this false so already-cached accessories stay registered.
    */
-  unregisterUuids: string[]
+  authoritative: boolean
 }
 
 export function backoffDelayMs(attempt: number, baseMs = 15_000, capMs = 300_000): number {
@@ -39,11 +41,29 @@ export function usableLocalDevice(device: DeviceConfig | undefined): device is D
   return Boolean(clean.name && clean.blid && clean.robotpwd && clean.ipaddress)
 }
 
-function localDevices(config: RoombOMaticConfig): DeviceConfig[] {
-  if (!Array.isArray(config.devices)) {
-    return []
+export function configuredDeviceList(config: RoombOMaticConfig): DeviceConfig[] | undefined {
+  const devices = config.devices as DeviceConfig[] | Record<string, DeviceConfig> | undefined
+  if (!devices) {
+    return undefined
   }
-  return config.devices.filter(usableLocalDevice).map(device => sanitizeDevice(device))
+  if (Array.isArray(devices)) {
+    return devices
+  }
+  if (typeof devices === 'object') {
+    return Object.values(devices)
+  }
+  return undefined
+}
+
+function ipHints(devices: DeviceConfig[] | undefined): Map<string, string> {
+  const hints = new Map<string, string>()
+  for (const device of devices ?? []) {
+    const clean = sanitizeDevice(device)
+    if (clean.blid && clean.ipaddress) {
+      hints.set(clean.blid, clean.ipaddress)
+    }
+  }
+  return hints
 }
 
 /**
@@ -54,45 +74,68 @@ function localDevices(config: RoombOMaticConfig): DeviceConfig[] {
 export async function planDeviceDiscovery(input: {
   config: RoombOMaticConfig
   discoverCloud: (email: string, password: string) => Promise<CloudDiscoveryResult>
+  locateRobots?: () => Promise<Array<{ blid: string, ip: string }>>
 }): Promise<DiscoveryPlan> {
-  const emptyUnregister: string[] = []
-  const configured = Array.isArray(input.config.devices) ? input.config.devices : undefined
-  if (configured && configured.length > 0) {
+  const listed = configuredDeviceList(input.config)
+  const complete = (listed ?? []).filter(usableLocalDevice).map(device => sanitizeDevice(device))
+  const cloudAllowed = input.config.disableDiscovery !== true && Boolean(input.config.email && input.config.password)
+  if (complete.length > 0 || (listed !== undefined && !cloudAllowed)) {
     return {
       source: 'local',
-      devices: localDevices(input.config),
+      devices: complete,
       retry: false,
-      unregisterUuids: emptyUnregister,
+      authoritative: true,
     }
   }
-  if (input.config.disableDiscovery === true || !input.config.email || !input.config.password) {
+  if (!cloudAllowed) {
     return {
       source: 'none',
       devices: [],
       retry: false,
-      unregisterUuids: emptyUnregister,
+      authoritative: false,
     }
   }
   let result: CloudDiscoveryResult
   try {
-    result = await input.discoverCloud(input.config.email, input.config.password)
+    result = await input.discoverCloud(input.config.email!, input.config.password!)
   }
   catch {
     result = { ok: false, robots: [] }
   }
-  const robots = (result.robots ?? []).filter(usableLocalDevice).map(device => sanitizeDevice(device))
-  if (!result.ok || robots.length === 0) {
+  if (!result.ok) {
     return {
       source: 'cloud',
       devices: [],
       retry: true,
-      unregisterUuids: emptyUnregister,
+      authoritative: false,
+    }
+  }
+  const hints = ipHints(listed)
+  let located: Array<{ blid: string, ip: string }> = []
+  try {
+    located = await (input.locateRobots ?? discoverLocalRobots)()
+  }
+  catch {
+    located = []
+  }
+  const found = new Map(located.map(robot => [robot.blid, robot.ip]))
+  const robots = (result.robots ?? []).map((robot) => {
+    const clean = sanitizeDevice(robot)
+    const ipaddress = clean.ipaddress || hints.get(clean.blid) || found.get(clean.blid) || ''
+    return sanitizeDevice({ ...clean, ipaddress })
+  }).filter(usableLocalDevice)
+  if (robots.length === 0) {
+    return {
+      source: 'cloud',
+      devices: [],
+      retry: true,
+      authoritative: false,
     }
   }
   return {
     source: 'cloud',
     devices: robots,
     retry: false,
-    unregisterUuids: emptyUnregister,
+    authoritative: true,
   }
 }

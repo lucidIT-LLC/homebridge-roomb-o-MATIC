@@ -3,6 +3,7 @@ import type { API, Logging, PlatformAccessory } from 'homebridge'
 import { describe, expect, it, vi } from 'vitest'
 
 import { RoombOMaticPlatform } from './platform.js'
+import { publicSerial } from './redact.js'
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js'
 import type { DeviceConfig } from './settings.js'
 
@@ -171,6 +172,77 @@ describe('platform discovery', () => {
     expect(JSON.stringify(matter)).not.toContain('LOCALBLID')
     expect(JSON.stringify(matter)).not.toContain('LOCALPWD')
     expect(registered).toHaveLength(1)
+    platform.shutdown()
+  })
+
+  it('removes a cached accessory that the local configuration no longer lists', async () => {
+    const { api, unregistered, Accessory } = fakeApi()
+    const platform = new RoombOMaticPlatform(fakeLogger(), {
+      platform: PLATFORM_NAME,
+      devices: [device],
+    }, api, {
+      robotFactory: () => ({
+        start: async () => undefined,
+        stop: async () => undefined,
+        dock: async () => undefined,
+        end: () => undefined,
+      }),
+    })
+    const stale = new Accessory('Old Roomba', 'uuid:someone-else') as unknown as PlatformAccessory
+    platform.configureAccessory(stale)
+    await platform.discoverDevices()
+    expect(unregistered).toHaveLength(1)
+    platform.shutdown()
+  })
+
+  it('reattaches handlers on the cached Matter accessory', async () => {
+    const { api, matterRegistered } = fakeApi(true)
+    const cached = {
+      UUID: `matter:${publicSerial(device.blid)}`,
+      displayName: 'Roomba',
+      handlers: {} as Record<string, unknown>,
+    }
+    const platform = new RoombOMaticPlatform(fakeLogger(), {
+      platform: PLATFORM_NAME,
+      devices: [device],
+    }, api, {
+      robotFactory: () => ({
+        start: async () => undefined,
+        stop: async () => undefined,
+        dock: async () => undefined,
+        end: () => undefined,
+      }),
+    })
+    platform.configureMatterAccessory(cached)
+    await platform.discoverDevices()
+    await vi.waitFor(() => {
+      expect(matterRegistered).toHaveLength(1)
+    })
+    expect(matterRegistered[0]).toBe(cached)
+    expect(cached.handlers.rvcRunMode).toBeTypeOf('object')
+    platform.shutdown()
+  })
+
+  it('does not talk to Matter when the user turns it off', async () => {
+    const { api, matterRegistered } = fakeApi(true)
+    const update = (api as unknown as { matter: { updateAccessoryState: ReturnType<typeof vi.fn> } }).matter.updateAccessoryState
+    const platform = new RoombOMaticPlatform(fakeLogger(), {
+      platform: PLATFORM_NAME,
+      enableMatter: 'off',
+      devices: [device],
+    }, api, {
+      robotFactory: () => ({
+        start: async () => undefined,
+        stop: async () => undefined,
+        dock: async () => undefined,
+        getRobotState: async () => ({ batPct: 90, cleanMissionStatus: { phase: 'charge' } }),
+        end: () => undefined,
+      }),
+    })
+    await platform.discoverDevices()
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(matterRegistered).toEqual([])
+    expect(update).not.toHaveBeenCalled()
     platform.shutdown()
   })
 })

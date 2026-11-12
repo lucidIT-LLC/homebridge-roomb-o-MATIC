@@ -29,8 +29,52 @@ describe('discovery planning', () => {
     expect(discoverCloud).not.toHaveBeenCalled()
     expect(plan.source).toBe('local')
     expect(plan.devices[0]?.robotpwd).toBe('secret')
-    expect(plan.unregisterUuids).toEqual([])
+    expect(plan.authoritative).toBe(true)
     expect(plan.retry).toBe(false)
+  })
+
+  it('accepts the v1.2.1 map of devices', async () => {
+    const plan = await planDeviceDiscovery({
+      config: {
+        platform: 'Roomb-O-Matic',
+        devices: { hall: local } as unknown as DeviceConfig[],
+      },
+      discoverCloud: async () => {
+        throw new Error('cloud should not run')
+      },
+    })
+    expect(plan.devices).toHaveLength(1)
+    expect(plan.devices[0]?.ipaddress).toBe('192.0.2.10')
+    expect(plan.authoritative).toBe(true)
+  })
+
+  it('fills a cloud robot IP from UDP discovery or a configured hint', async () => {
+    const fromNetwork = await planDeviceDiscovery({
+      config: { platform: 'Roomb-O-Matic', email: 'person@example.com', password: 'account-secret' },
+      discoverCloud: async () => ({
+        ok: true,
+        robots: [{ name: 'Cloud', blid: 'abc', robotpwd: 'pwd', ipaddress: '' }],
+      }),
+      locateRobots: async () => [{ blid: 'abc', ip: '192.0.2.30' }],
+    })
+    expect(fromNetwork.retry).toBe(false)
+    expect(fromNetwork.devices[0]?.ipaddress).toBe('192.0.2.30')
+
+    const fromConfig = await planDeviceDiscovery({
+      config: {
+        platform: 'Roomb-O-Matic',
+        email: 'person@example.com',
+        password: 'account-secret',
+        devices: [{ name: 'Cloud', blid: 'abc', robotpwd: '', ipaddress: '192.0.2.40' }],
+      },
+      discoverCloud: async () => ({
+        ok: true,
+        robots: [{ name: 'Cloud', blid: 'abc', robotpwd: 'pwd\0', ipaddress: '' }],
+      }),
+      locateRobots: async () => [],
+    })
+    expect(fromConfig.devices[0]).toMatchObject({ robotpwd: 'pwd', ipaddress: '192.0.2.40' })
+    expect(fromConfig.authoritative).toBe(true)
   })
 
   it('does not unregister cached accessories when cloud discovery fails or is empty', async () => {
@@ -42,7 +86,7 @@ describe('discovery planning', () => {
     })
     expect(failed.retry).toBe(true)
     expect(failed.devices).toEqual([])
-    expect(failed.unregisterUuids).toEqual([])
+    expect(failed.authoritative).toBe(false)
 
     const empty = await planDeviceDiscovery({
       config: { platform: 'Roomb-O-Matic', email: 'person@example.com', password: 'account-secret' },
@@ -50,9 +94,10 @@ describe('discovery planning', () => {
         ok: true,
         robots: [{ name: 'Cloud', blid: 'abc', robotpwd: 'pwd', ipaddress: '' }],
       }),
+      locateRobots: async () => [],
     })
     expect(empty.retry).toBe(true)
-    expect(empty.unregisterUuids).toEqual([])
+    expect(empty.authoritative).toBe(false)
   })
 
   it('backs off and then caps the cloud retry delay', () => {
