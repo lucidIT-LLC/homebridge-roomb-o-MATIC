@@ -1,3 +1,5 @@
+import type { MatterAccessory } from 'homebridge'
+
 import type { CleanMode, RoomConfig } from './settings.js'
 
 import {
@@ -58,6 +60,34 @@ export function rvcCleanModeCluster(mode: CleanMode): {
   }
 }
 
+export interface HomebridgeMatterApi {
+  uuid?: { generate: (value: string) => string }
+  deviceTypes?: { RoboticVacuumCleaner?: unknown }
+  registerPlatformAccessories?: (plugin: string, platform: string, accessories: MatterAccessory[]) => Promise<void>
+  updateAccessoryState?: (uuid: string, cluster: string, attributes: Record<string, unknown>) => Promise<void>
+}
+
+type ClusterHandler = (...args: unknown[]) => Promise<void>
+
+function modeRequest(value: unknown): { newMode?: number } {
+  if (!value || typeof value !== 'object' || !('newMode' in value)) {
+    return {}
+  }
+  const mode = value.newMode
+  return { newMode: typeof mode === 'number' ? mode : undefined }
+}
+
+function areaRequest(value: unknown): { newAreas?: number[] } {
+  if (!value || typeof value !== 'object' || !('newAreas' in value)) {
+    return {}
+  }
+  const areas = value.newAreas
+  if (!Array.isArray(areas)) {
+    return {}
+  }
+  return { newAreas: areas.filter((area): area is number => typeof area === 'number') }
+}
+
 export interface MatterVacuumHandlers {
   changeCleanMode: (request: { newMode?: number }) => Promise<void>
   changeRunMode: (request: { newMode?: number }) => Promise<void>
@@ -91,7 +121,7 @@ export function buildMatterDefinition(input: {
   hardwareRevision: string
   context: Record<string, never>
   clusters: Record<string, unknown>
-  handlers: Record<string, Record<string, (...args: any[]) => Promise<void>>>
+  handlers: Record<string, Record<string, ClusterHandler>>
   areas: MatterRoomArea[]
 } {
   const cleanMode = rvcCleanModeCluster(input.cleanMode)
@@ -124,15 +154,17 @@ export function buildMatterDefinition(input: {
       operationalState: RVC_OPERATIONAL.DOCKED,
     },
   }
-  const handlers: Record<string, Record<string, (...args: any[]) => Promise<void>>> = {
+  const handlers: Record<string, Record<string, ClusterHandler>> = {
     identify: {
-      identify: async () => input.handlers.identify?.(),
+      identify: async () => {
+        await input.handlers.identify?.()
+      },
     },
     rvcCleanMode: {
-      changeToMode: async request => input.handlers.changeCleanMode(request ?? {}),
+      changeToMode: async request => input.handlers.changeCleanMode(modeRequest(request)),
     },
     rvcRunMode: {
-      changeToMode: async request => input.handlers.changeRunMode(request ?? {}),
+      changeToMode: async request => input.handlers.changeRunMode(modeRequest(request)),
     },
     rvcOperationalState: {
       pause: async () => input.handlers.pause(),
@@ -157,7 +189,7 @@ export function buildMatterDefinition(input: {
       selectedAreas: areas.filter(area => selected.has(area.roomId)).map(area => area.areaId),
     }
     handlers.serviceArea = {
-      selectAreas: async request => input.handlers.selectAreas(request ?? {}),
+      selectAreas: async request => input.handlers.selectAreas(areaRequest(request)),
     }
   }
   return {
