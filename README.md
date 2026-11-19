@@ -2,13 +2,11 @@
 
 ![Roomb-O-Matic, a Matter vacuum with rooms and a cleaning level, by lucidIT](assets/header.png)
 
-Roomb-O-Matic puts an iRobot Roomba in Apple Home as a **Matter robotic vacuum**.
+Matter vacuum for your Roomba on Homebridge. Choose the rooms and the cleaning level: Automatic, Deep Clean, or Quick.
 
-You choose the rooms. You choose the cleaning level. Automatic, Deep Clean, or Quick. That is the same control a modern Matter vacuum gives you, on a Roomba that is already on your network.
+Roomb-O-Matic is that plugin, from [lucidIT](https://lucidit.io). On Homebridge 2.5 the Roomba shows up in Apple Home as its own Matter vacuum. You pair that vacuum with its own code. The Homebridge bridge code does not add the robot.
 
-It is a Homebridge plugin from [lucidIT](https://lucidit.io). Homebridge 2.5 publishes the Matter vacuum. The HomeKit fan, dock, battery, and bin stay available for controllers that are not using Matter.
-
-This is not the `homebridge-plugins/homebridge-roomba` plugin.
+The HomeKit fan, dock, battery, and bin stay for controllers that are not using Matter.
 
 ## Install
 
@@ -20,7 +18,7 @@ npm install -g homebridge-roomb-o-matic
 
 Homebridge 1.9 through 2.x, including 2.5. Node.js 20, 22, or 24.
 
-Turn Matter on for that Homebridge bridge, then restart. The Roomba is paired as its own vacuum. The bridge QR code does not add the robot.
+Turn Matter on for that Homebridge bridge, then restart.
 
 ## Rooms
 
@@ -116,5 +114,7 @@ npm run build
 ```
 
 Do not put real BLIDs, passwords, Matter pairing codes, or personal addresses in this repository.
+
+This is Roomb-O-Matic from lucidIT. It is not the `homebridge-plugins/homebridge-roomba` plugin.
 
 Roomba is a trademark of iRobot. The marks in this package belong to lucidIT. They are not iRobot's logos.
