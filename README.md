@@ -1,20 +1,52 @@
-# Homebridge Roomb-O-Matic
+# Roomb-O-Matic
 
-Homebridge plugin for iRobot Roomba vacuums on the local network. It keeps the HomeKit Fan, dock switch, battery, and bin from 1.2.1, and on Homebridge 2.5 it also publishes a Matter robotic vacuum.
+![Roomb-O-Matic, a Matter vacuum with rooms and a cleaning level, by lucidIT](assets/header.png)
 
-The published npm package `homebridge-roomb-o-matic@1.2.1` did not include TypeScript source. This repository is that package, reconstructed, with the roadmap items filled in. It is not the `homebridge-plugins/homebridge-roomba` plugin.
+Matter vacuum for your Roomba on Homebridge. Choose the rooms and the cleaning level: Automatic, Deep Clean, or Quick.
+
+Roomb-O-Matic is that plugin, from [lucidIT](https://lucidit.io). On Homebridge 2.5 the Roomba shows up in Apple Home as its own Matter vacuum. You pair that vacuum with its own code. The Homebridge bridge code does not add the robot.
+
+The HomeKit fan, dock, battery, and bin stay for controllers that are not using Matter.
 
 ## Install
 
+In Homebridge, install **homebridge-roomb-o-matic** from the plugin search, or:
+
 ```bash
-npm install -g homebridge-roomb-o-matic@1.3.1
+npm install -g homebridge-roomb-o-matic
 ```
 
-The npm package name is `homebridge-roomb-o-matic` (unscoped). 1.3.1 is the first release published since 1.2.1. Homebridge 1.9 through 2.x is supported, including 2.5. Node.js 20, 22, or 24.
+Homebridge 1.9 through 2.x, including 2.5. Node.js 20, 22, or 24.
+
+Turn Matter on for that Homebridge bridge, then restart.
+
+## Rooms
+
+Apple Home shows your rooms as Matter Service Areas. A selected room starts a room mission. An empty selection cleans the whole map.
+
+Put each room's region id and name in `rooms`, plus `pmapId` and `userPmapvId`.
+
+```bash
+roomb-o-matic-list-rooms --ip 192.0.2.10 --blid YOUR_BLID --password YOUR_ROBOT_PASSWORD
+```
+
+Close the iRobot app first. If Homebridge is already connected to that robot, stop the plugin for a moment so the robot can accept this connection. The command prints map and room ids only.
+
+## Cleaning level
+
+| Level | What the Roomba does |
+| --- | --- |
+| Automatic | The robot's own pass setting |
+| Deep Clean | Two vacuum passes |
+| Quick | One vacuum pass |
+
+These are vacuum levels. The Roomba does not mop, and the plugin does not advertise a mop mode. Each level carries the Matter Vacuum tag, so Apple Home lists Deep Clean and Quick instead of hiding them.
+
+The level you pick applies to a room clean and to a whole-home clean.
 
 ## Configure
 
-Use the Roomb-O-Matic page in Homebridge Config UI, or edit `config.json`:
+Use the Roomb-O-Matic page in Homebridge, or edit `config.json`:
 
 ```json
 {
@@ -40,21 +72,19 @@ Use the Roomb-O-Matic page in Homebridge Config UI, or edit `config.json`:
 }
 ```
 
-`platform` must stay `Roomb-O-Matic`. `disableDiscovery: true` skips the iRobot cloud. A saved `devices` list always skips cloud login, even if an email and password are also present. If cloud discovery is used and it fails or comes back empty, accessories already cached by Homebridge stay registered and discovery retries with backoff.
+`platform` stays `Roomb-O-Matic`. `enableMatter` accepts `auto` (default), `on`, or `off`. `auto` publishes the Matter vacuum when that bridge has Matter available.
 
-`enableMatter` accepts `auto` (default), `on`, or `off`. `auto` publishes Matter when that Homebridge bridge has Matter available. The HomeKit Fan path stays in place either way.
+A saved `devices` list uses local MQTT and skips the iRobot cloud. `disableDiscovery: true` does the same. If cloud discovery fails or comes back empty, accessories Homebridge already cached stay registered, and discovery retries with backoff.
 
-## Password capture
+## Password
 
-Close the iRobot app first. The robot accepts one local connection at a time.
+Close the iRobot app. The robot accepts one local connection at a time.
 
-On an i-series robot such as the i5+, press and hold the **Home** button (the dock / house icon) for about two seconds, until it plays tones. Do not hold both buttons; that gesture is for 900-series robots.
+On an i-series robot such as the i5+, press and hold the **Home** button for about two seconds, until it plays tones. Do not hold both buttons. That gesture is for 900-series robots.
 
-The plugin then connects to port 8883 and reads the password. It retries while it waits for the button. Trailing NUL bytes are removed, because leaving one on the password makes MQTT report "Bad username or password".
+The plugin reads the password on port 8883 and retries while it waits for the button. It keeps a leading `:1:` when the robot sends one. That prefix is part of the password. Dropping it makes MQTT answer "Bad username or password". Capture the password again if a robot saved by an older build fails local login that way.
 
-The stored password keeps a leading `:1:` when the robot sends one. On a typical 38-byte reply that prefix starts at offset 7 and the password is 30 characters. Slicing later stores a shorter secret, and the robot answers with the same MQTT error. Capture the password again if a robot saved by an older build fails local login that way.
-
-In Config UI, open Roomb-O-Matic, enter the robot IP, and choose **Capture password**. The page does not print the password or BLID in the status line. Saving the form writes them into `devices` and turns cloud login off.
+In Homebridge, open Roomb-O-Matic, enter the robot IP, and choose **Capture password**. The page does not print the password or BLID. Saving the form writes them into `devices` and turns cloud login off.
 
 From a shell, including `docker exec` without a TTY:
 
@@ -62,43 +92,17 @@ From a shell, including `docker exec` without a TTY:
 roomb-o-matic-getpassword --ip 192.0.2.10 --config /var/lib/homebridge/config.json --name "Downstairs Roomba"
 ```
 
-Add `--blid YOUR_BLID` when the robot does not answer the local announcement. The command does not use `process.stdin.setRawMode`, and it does not print the password or BLID.
-
-## Rooms
-
-Apple Home room selection uses Matter Service Areas. Put each room's region id and name in `rooms`, plus `pmapId` and `userPmapvId`. A selected room starts a `cleanRoom` mission with `pmap_id`, `user_pmapv_id`, and `regions`.
-
-List those ids from a robot that is already on the network. Close the iRobot app first. If Homebridge is already connected to that robot, stop the plugin for a moment so the robot can accept this connection.
-
-```bash
-roomb-o-matic-list-rooms --ip 192.0.2.10 --blid YOUR_BLID --password YOUR_ROBOT_PASSWORD
-```
-
-The command prints map and room ids only.
+Add `--blid YOUR_BLID` when the robot does not answer the local announcement. The command does not print the password or BLID.
 
 ## Matter pairing
 
-A Roomba is published as its own Matter vacuum, the same way a Roborock is. Apple Home pairs that vacuum with its own code. The Homebridge bridge QR code does not add the robot.
-
 1. In Homebridge, open Settings and turn Matter on for the bridge that runs this plugin. Restart Homebridge.
-2. Save the robot in the Roomb-O-Matic settings page.
-3. Open that page again and use the code under **Matter pairing**. In the Apple Home app, add an accessory and enter the code, or scan the QR code.
+2. Save the robot on the Roomb-O-Matic page.
+3. Open that page again and use the code under **Matter pairing**. In Apple Home, add an accessory and enter the code, or scan the QR code.
 
-The HomeKit Fan, dock switch, battery, and bin stay available when Matter is off.
+## HomeKit
 
-## Clean modes
-
-Matter advertises three RvcCleanMode values. One mode is not enough: Homebridge 2.5 / Matter.js 0.18 reject a list shorter than 2, and Apple Home then reports the accessory as not found.
-
-| Mode | Passes |
-| --- | --- |
-| Automatic | Robot default (`noAutoPasses: false`, `twoPass: false`) |
-| Deep Clean | Two passes (`noAutoPasses: true`, `twoPass: true`) |
-| Quick | One pass (`noAutoPasses: true`, `twoPass: false`) |
-
-Apple Home only lists a vacuum intensity when the mode also has the Vacuum tag (`16385`). Automatic is tagged Auto (`0`) and Vacuum. Deep Clean is tagged DeepClean (`16384`) and Vacuum. Quick is tagged Quick (`1`) and Vacuum. Deep Clean is a second vacuum pass. These robots do not mop, so the modes do not carry a Mop tag.
-
-The HomeKit Fan still starts and stops a clean. Its clean mode and selected rooms come from the device config until a Matter controller changes them.
+When Matter is off, the HomeKit fan still starts and stops a clean. Dock, battery, and bin stay on that accessory. Its clean level and selected rooms come from the device config until a Matter controller changes them.
 
 ## Development
 
@@ -110,3 +114,7 @@ npm run build
 ```
 
 Do not put real BLIDs, passwords, Matter pairing codes, or personal addresses in this repository.
+
+This is Roomb-O-Matic from lucidIT. It is not the `homebridge-plugins/homebridge-roomba` plugin.
+
+Roomba is a trademark of iRobot. The marks in this package belong to lucidIT. They are not iRobot's logos.

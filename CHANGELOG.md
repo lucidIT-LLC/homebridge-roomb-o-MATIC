@@ -1,8 +1,12 @@
 # Changelog
 
+## 1.3.2
+
+The published package now says what the plugin is. Matter vacuum for your Roomba on Homebridge. Choose the rooms and the cleaning level: Automatic, Deep Clean, or Quick. The package is credited to lucidIT.
+
 ## 1.3.1
 
-First npm release since 1.2.1. Source version 1.3.0 (squash-merged in #1) was never published. This package is that work plus two fixes found in real Homebridge use.
+First npm release since 1.2.1, and the first one that publishes the Roomba as a Matter vacuum. In Apple Home you choose rooms and a cleaning level: Automatic, Deep Clean, or Quick. Source version 1.3.0 (squash-merged in #1) was never published. This package is that work plus two fixes found in real Homebridge use. By lucidIT.
 
 ### Fixes
 
