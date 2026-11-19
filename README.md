@@ -16,7 +16,7 @@ In Homebridge, install **homebridge-roomb-o-matic** from the plugin search, or:
 npm install -g homebridge-roomb-o-matic
 ```
 
-Homebridge 1.9 through 2.x, including 2.5. Node.js 20, 22, or 24.
+Homebridge 1.9 through 2.x, including 2.5. Node.js 20, 22, 24, or 26.
 
 Turn Matter on for that Homebridge bridge, then restart.
 
