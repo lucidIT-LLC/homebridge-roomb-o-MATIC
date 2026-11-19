@@ -1,6 +1,6 @@
 {
   "name": "homebridge-roomb-o-matic",
-  "displayName": "Roomb-O-Matic",
+  "displayName": "Roomb-o-MATIC for Homebridge",
   "version": "1.3.2",
   "description": "Get the modern Matter controls you are missing for your Roomba i5+. Rooms, cleaning modes, and full Matter support.",
   "author": "lucidIT, LLC (https://lucidit.io)",
