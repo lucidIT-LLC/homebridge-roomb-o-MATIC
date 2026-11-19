@@ -2,7 +2,7 @@
   "name": "homebridge-roomb-o-matic",
   "displayName": "Roomb-O-Matic",
   "version": "1.3.2",
-  "description": "Matter vacuum for your Roomba on Homebridge. Choose the rooms and the cleaning level: Automatic, Deep Clean, or Quick.",
+  "description": "Get the modern Matter controls you are missing for your Roomba i5+. Rooms, cleaning modes, and full Matter support.",
   "author": "lucidIT, LLC (https://lucidit.io)",
   "license": "MIT",
   "homepage": "https://github.com/lucidIT-LLC/homebridge-roomb-o-MATIC#readme",
