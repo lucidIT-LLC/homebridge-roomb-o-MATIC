@@ -3,7 +3,7 @@
   "pluginType": "platform",
   "singular": true,
   "customUi": true,
-  "headerDisplay": "Roomb-O-Matic connects to your Roomba on the local network. Close the iRobot app before capturing a password or starting Homebridge.",
+  "headerDisplay": "Roomb-o-MATIC connects to your Roomba on the local network. Close the iRobot app before capturing a password or starting Homebridge.",
   "footerDisplay": "Cloud login stays off when devices are saved here. Gigya HTTP 403 does not remove accessories Homebridge has already cached.",
   "schema": {
     "type": "object",
@@ -11,7 +11,7 @@
       "name": {
         "title": "Name",
         "type": "string",
-        "default": "Roomb-O-Matic",
+        "default": "Roomb-o-MATIC",
         "required": true
       },
       "disableDiscovery": {

@@ -1,10 +1,17 @@
-# Roomb-O-Matic
+<p align="center">
+  <img alt="Homebridge linked with the iRobot mark" src="assets/homebridge-x-roomba.png" width="600">
+</p>
+<p align="center">
+  <a href="https://www.o-matic.ai/"><img alt="o-MATIC" src="assets/o-matic-wordmark.png" width="480"></a>
+</p>
 
-![Roomb-O-Matic, a Matter vacuum with rooms and a cleaning level, by lucidIT](assets/header.png)
+# Roomb-o-MATIC for Homebridge
+
+Get the modern Matter controls you are missing for your Roomba i5+. Rooms, cleaning modes, and full Matter support.
 
 Matter vacuum for your Roomba on Homebridge. Choose the rooms and the cleaning level: Automatic, Deep Clean, or Quick.
 
-Roomb-O-Matic is that plugin, from [lucidIT](https://lucidit.io). On Homebridge 2.5 the Roomba shows up in Apple Home as its own Matter vacuum. You pair that vacuum with its own code. The Homebridge bridge code does not add the robot.
+Roomb-o-MATIC is that plugin, from [lucidIT](https://lucidit.io). On Homebridge 2.5 the Roomba shows up in Apple Home as its own Matter vacuum. You pair that vacuum with its own code. The Homebridge bridge code does not add the robot.
 
 The HomeKit fan, dock, battery, and bin stay for controllers that are not using Matter.
 
@@ -46,12 +53,12 @@ The level you pick applies to a room clean and to a whole-home clean.
 
 ## Configure
 
-Use the Roomb-O-Matic page in Homebridge, or edit `config.json`:
+Use the Roomb-o-MATIC page in Homebridge, or edit `config.json`:
 
 ```json
 {
   "platform": "Roomb-O-Matic",
-  "name": "Roomb-O-Matic",
+  "name": "Roomb-o-MATIC",
   "disableDiscovery": true,
   "enableMatter": "auto",
   "devices": [
@@ -72,7 +79,7 @@ Use the Roomb-O-Matic page in Homebridge, or edit `config.json`:
 }
 ```
 
-`platform` stays `Roomb-O-Matic`. `enableMatter` accepts `auto` (default), `on`, or `off`. `auto` publishes the Matter vacuum when that bridge has Matter available.
+`platform` stays `Roomb-O-Matic`. That string is what Homebridge already has in existing configs. The name people see is Roomb-o-MATIC. `enableMatter` accepts `auto` (default), `on`, or `off`. `auto` publishes the Matter vacuum when that bridge has Matter available.
 
 A saved `devices` list uses local MQTT and skips the iRobot cloud. `disableDiscovery: true` does the same. If cloud discovery fails or comes back empty, accessories Homebridge already cached stay registered, and discovery retries with backoff.
 
@@ -84,7 +91,7 @@ On an i-series robot such as the i5+, press and hold the **Home** button for abo
 
 The plugin reads the password on port 8883 and retries while it waits for the button. It keeps a leading `:1:` when the robot sends one. That prefix is part of the password. Dropping it makes MQTT answer "Bad username or password". Capture the password again if a robot saved by an older build fails local login that way.
 
-In Homebridge, open Roomb-O-Matic, enter the robot IP, and choose **Capture password**. The page does not print the password or BLID. Saving the form writes them into `devices` and turns cloud login off.
+In Homebridge, open Roomb-o-MATIC, enter the robot IP, and choose **Capture password**. The page does not print the password or BLID. Saving the form writes them into `devices` and turns cloud login off.
 
 From a shell, including `docker exec` without a TTY:
 
@@ -97,7 +104,7 @@ Add `--blid YOUR_BLID` when the robot does not answer the local announcement. Th
 ## Matter pairing
 
 1. In Homebridge, open Settings and turn Matter on for the bridge that runs this plugin. Restart Homebridge.
-2. Save the robot on the Roomb-O-Matic page.
+2. Save the robot on the Roomb-o-MATIC page.
 3. Open that page again and use the code under **Matter pairing**. In Apple Home, add an accessory and enter the code, or scan the QR code.
 
 ## HomeKit
@@ -115,6 +122,8 @@ npm run build
 
 Do not put real BLIDs, passwords, Matter pairing codes, or personal addresses in this repository.
 
-This is Roomb-O-Matic from lucidIT. It is not the `homebridge-plugins/homebridge-roomba` plugin.
+This is Roomb-o-MATIC for Homebridge, from lucidIT. It is not the `homebridge-plugins/homebridge-roomba` plugin.
 
-Roomba is a trademark of iRobot. The marks in this package belong to lucidIT. They are not iRobot's logos.
+Roomba and iRobot marks are not lucidIT's, and this project is not affiliated with iRobot.
+
+The Homebridge and iRobot marks are theirs.
