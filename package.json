@@ -1,7 +1,7 @@
 {
   "name": "homebridge-roomb-o-matic",
   "displayName": "Roomb-O-Matic",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Matter robotic vacuum for iRobot Roomba on Homebridge. Choose rooms and a cleaning level in Apple Home: Automatic, Deep Clean, or Quick.",
   "author": "lucidIT, LLC (https://lucidit.io)",
   "license": "MIT",
