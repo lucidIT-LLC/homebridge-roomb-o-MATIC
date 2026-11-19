@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.3
+
+Node 26. Public name Roomb-o-MATIC for Homebridge. iRobot/Homebridge lockup and o-MATIC wordmark. Schema required arrays for verification.
+
 ## 1.3.2
 
 The published package now says what the plugin is. Matter vacuum for your Roomba on Homebridge. Choose the rooms and the cleaning level: Automatic, Deep Clean, or Quick. The package is credited to lucidIT.

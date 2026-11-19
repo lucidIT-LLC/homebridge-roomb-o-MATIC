@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Roomb-O-Matic</title>
+    <title>Roomb-o-MATIC for Homebridge</title>
     <style>
       :root { color-scheme: light dark; font-family: "Segoe UI", sans-serif; }
       body { margin: 0; padding: 24px; max-width: 860px; }
@@ -24,7 +24,7 @@
     </style>
   </head>
   <body>
-    <h1>Roomb-O-Matic</h1>
+    <h1>Roomb-o-MATIC for Homebridge</h1>
     <p>Capture the robot password on the local network. This works in Docker without a terminal.</p>
     <div class="card">
       <h2>Before you press the button</h2>
@@ -89,7 +89,7 @@
       const devicesNode = document.getElementById('devices')
       let platform = {
         platform: 'Roomb-O-Matic',
-        name: 'Roomb-O-Matic',
+        name: 'Roomb-o-MATIC',
         disableDiscovery: true,
         enableMatter: 'auto',
         devices: [],
@@ -320,7 +320,7 @@
       })
 
       document.getElementById('save-button').addEventListener('click', async () => {
-        platform.name = platform.name || 'Roomb-O-Matic'
+        platform.name = platform.name || 'Roomb-o-MATIC'
         platform.platform = 'Roomb-O-Matic'
         platform.disableDiscovery = document.getElementById('disable-discovery').checked
         platform.enableMatter = document.getElementById('enable-matter').value

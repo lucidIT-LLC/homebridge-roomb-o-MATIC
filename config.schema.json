@@ -3,16 +3,16 @@
   "pluginType": "platform",
   "singular": true,
   "customUi": true,
-  "headerDisplay": "Roomb-O-Matic connects to your Roomba on the local network. Close the iRobot app before capturing a password or starting Homebridge.",
+  "headerDisplay": "Roomb-o-MATIC connects to your Roomba on the local network. Close the iRobot app before capturing a password or starting Homebridge.",
   "footerDisplay": "Cloud login stays off when devices are saved here. Gigya HTTP 403 does not remove accessories Homebridge has already cached.",
   "schema": {
     "type": "object",
+    "required": ["name"],
     "properties": {
       "name": {
         "title": "Name",
         "type": "string",
-        "default": "Roomb-O-Matic",
-        "required": true
+        "default": "Roomb-o-MATIC"
       },
       "disableDiscovery": {
         "title": "Skip iRobot cloud login",
@@ -42,26 +42,23 @@
         "type": "array",
         "items": {
           "type": "object",
+          "required": ["name", "blid", "robotpwd", "ipaddress"],
           "properties": {
             "name": {
               "title": "Name",
-              "type": "string",
-              "required": true
+              "type": "string"
             },
             "blid": {
               "title": "BLID",
-              "type": "string",
-              "required": true
+              "type": "string"
             },
             "robotpwd": {
               "title": "Robot password",
-              "type": "string",
-              "required": true
+              "type": "string"
             },
             "ipaddress": {
               "title": "IP address",
               "type": "string",
-              "required": true,
               "format": "ipv4"
             },
             "pmapId": {
@@ -86,16 +83,15 @@
               "type": "array",
               "items": {
                 "type": "object",
+                "required": ["id", "name"],
                 "properties": {
                   "id": {
                     "title": "Region id",
-                    "type": "string",
-                    "required": true
+                    "type": "string"
                   },
                   "name": {
                     "title": "Name",
-                    "type": "string",
-                    "required": true
+                    "type": "string"
                   },
                   "selected": {
                     "title": "Clean this room when the vacuum starts",
