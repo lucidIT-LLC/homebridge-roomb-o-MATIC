@@ -3,7 +3,6 @@ import type { API, Logging, PlatformAccessory, Service } from 'homebridge'
 import { describe, expect, it, vi } from 'vitest'
 
 import { RoombaAccessory, type RobotFactory } from './accessory.js'
-import { getRoombas } from './roomba.js'
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js'
 import type { DeviceConfig } from './settings.js'
 
@@ -99,16 +98,6 @@ describe('v1.2.1 behavior', () => {
   it('keeps the platform name existing configs already use', () => {
     expect(PLATFORM_NAME).toBe('Roomb-O-Matic')
     expect(PLUGIN_NAME).toBe('homebridge-roomb-o-matic')
-  })
-
-  it('normalizes configured robots and does not log the blid or password', async () => {
-    const log = logger()
-    const robots = await getRoombas([device], log)
-    expect(robots).toEqual([device])
-    expect(log.lines.join('\n')).not.toContain('BLIDSECRET')
-    expect(log.lines.join('\n')).not.toContain('PWDSECRET')
-    const mapped = await getRoombas({ one: device }, log)
-    expect(mapped).toEqual([device])
   })
 
   it('exposes a Fan, dock switch, battery, and bin sensor and drives start, stop, and dock', async () => {

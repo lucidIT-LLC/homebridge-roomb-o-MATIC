@@ -1,4 +1,4 @@
-import type { API, CharacteristicValue, Logging, PlatformAccessory, Service } from 'homebridge'
+import type { API, CharacteristicValue, Logging, PlatformAccessory, Service, WithUUID } from 'homebridge'
 
 import type { LocalRobot } from 'dorita980'
 
@@ -12,7 +12,7 @@ import {
   RUN_MODE_IDLE,
   startMission,
 } from './mission.js'
-import { buildMatterDefinition, phaseIsCleaning, phaseToOperational } from './matterVacuum.js'
+import { buildMatterDefinition, phaseIsCleaning, phaseToOperational, type HomebridgeMatterApi } from './matterVacuum.js'
 import { publicSerial, safeError } from './redact.js'
 import { withTimeout } from './timeout.js'
 import { sanitizeDevice } from './discoveryPlan.js'
@@ -24,12 +24,6 @@ export type RobotFactory = (
   ip: string,
   onError: (error: unknown) => void,
 ) => LocalRobot
-
-export interface MatterBridge {
-  uuid?: { generate: (value: string) => string }
-  deviceTypes?: { RoboticVacuumCleaner?: unknown }
-  updateAccessoryState?: (uuid: string, cluster: string, attributes: Record<string, unknown>) => Promise<void>
-}
 
 function defaultRobotFactory(blid: string, password: string, ip: string, onError: (error: unknown) => void): LocalRobot {
   return new dorita980.Local(blid, password, ip, 2, { onError })
@@ -44,6 +38,8 @@ export class RoombaAccessory {
   private statePollInterval?: ReturnType<typeof setInterval>
   private cleanMode: CleanMode
   private selectedRoomIds: string[]
+  private matter?: HomebridgeMatterApi
+  private pollInFlight = false
   readonly matterUuid?: string
 
   constructor(
@@ -51,7 +47,7 @@ export class RoombaAccessory {
     private readonly api: API,
     private readonly accessory: PlatformAccessory,
     private device: DeviceConfig,
-    options?: { robotFactory?: RobotFactory, matter?: MatterBridge },
+    options?: { robotFactory?: RobotFactory, matter?: HomebridgeMatterApi },
   ) {
     this.device = sanitizeDevice(device)
     const { blid, robotpwd, ipaddress, name } = this.device
@@ -99,10 +95,7 @@ export class RoombaAccessory {
     this.statePollInterval?.unref?.()
   }
 
-  private matter?: MatterBridge
-  private pollInFlight = false
-
-  private service(type: any, name: string, subtype: string): Service {
+  private service(type: WithUUID<typeof Service>, name: string, subtype: string): Service {
     return this.accessory.getServiceById(type, subtype) ?? this.accessory.addService(type, name, subtype)
   }
 

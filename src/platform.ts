@@ -5,6 +5,7 @@ import type { MatterAccessory } from 'homebridge'
 import type { CloudDiscoveryResult } from './cloudDiscovery.js'
 import type { RobotFactory } from './accessory.js'
 import type { DeviceConfig, RoombOMaticConfig } from './settings.js'
+import type { HomebridgeMatterApi } from './matterVacuum.js'
 
 import { RoombaAccessory } from './accessory.js'
 import { discoverCloudRobots } from './cloudDiscovery.js'
@@ -13,15 +14,8 @@ import { writeMatterDeviceIndex, type MatterDeviceIndexEntry } from './matterPai
 import { safeError } from './redact.js'
 import { matterPreferenceEnabled, PLATFORM_NAME, PLUGIN_NAME } from './settings.js'
 
-interface MatterApi {
-  uuid?: { generate: (value: string) => string }
-  deviceTypes?: { RoboticVacuumCleaner?: unknown }
-  registerPlatformAccessories?: (plugin: string, platform: string, accessories: MatterAccessory[]) => Promise<void>
-  updateAccessoryState?: (uuid: string, cluster: string, attributes: Record<string, unknown>) => Promise<void>
-}
-
 type HomebridgeApi = API & {
-  matter?: MatterApi
+  matter?: HomebridgeMatterApi
   isMatterEnabled?: () => boolean
 }
 
@@ -222,7 +216,7 @@ export class RoombOMaticPlatform {
     void this.publishMatter(session, device)
   }
 
-  private sessionMatter(): MatterApi | undefined {
+  private sessionMatter(): HomebridgeMatterApi | undefined {
     const matter = this.matterApi()
     if (!matterPreferenceEnabled(this.config.enableMatter, Boolean(matter))) {
       return undefined
@@ -230,7 +224,7 @@ export class RoombOMaticPlatform {
     return matter
   }
 
-  private matterApi(): MatterApi | undefined {
+  private matterApi(): HomebridgeMatterApi | undefined {
     if (typeof this.api.isMatterEnabled === 'function' && !this.api.isMatterEnabled()) {
       return undefined
     }
@@ -266,7 +260,7 @@ export class RoombOMaticPlatform {
   }
 
   private async pushInitialMatterState(
-    matter: MatterApi,
+    matter: HomebridgeMatterApi,
     uuid: string,
     clusters: Record<string, unknown>,
   ): Promise<void> {
